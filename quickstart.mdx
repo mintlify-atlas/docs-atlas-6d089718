@@ -1,0 +1,203 @@
+---
+title: "Quick Start"
+description: "Get Gate up and running in minutes with this step-by-step guide."
+---
+
+# Quick Start
+
+This guide will help you install and configure Gate as a Minecraft proxy for your server network. For extending Gate with custom plugins, see the [Developers](/developers/introduction) section.
+
+## Install Gate
+
+Choose your preferred installation method:
+
+<Tabs>
+  <Tab title="Linux/macOS">
+    ```bash
+    curl -fsSL https://gate.minekube.com/install | bash
+    ```
+    
+    This script installs Gate to `/usr/local/bin/gate` and adds it to your PATH.
+  </Tab>
+  
+  <Tab title="Windows">
+    ```powershell
+    powershell -c "irm https://gate.minekube.com/install.ps1 | iex"
+    ```
+    
+    This script installs Gate to `%LOCALAPPDATA%\gate\bin\gate.exe` and adds it to your PATH.
+  </Tab>
+  
+  <Tab title="Go">
+    ```bash
+    go run go.minekube.com/gate@latest
+    ```
+    
+    This runs Gate directly without installation. Great for testing!
+  </Tab>
+  
+  <Tab title="Docker">
+    ```bash
+    docker run -p 25565:25565 ghcr.io/minekube/gate:latest
+    ```
+    
+    Run Gate in a container. See [Docker guide](/installation/docker) for more options.
+  </Tab>
+</Tabs>
+
+<Info>
+For detailed installation instructions, see the [Installation](/installation/binary) guides.
+</Info>
+
+## Run Gate
+
+After installation, start Gate with the default configuration:
+
+```bash
+gate
+```
+
+You should see output similar to this:
+
+```
+INFO	gate/root.go:93	logging verbosity	{"verbosity": 0}
+INFO	gate/root.go:94	using config file	{"config": ""}
+INFO	config	gate/gate.go:205	config validation warn	{"warn": "java: No backend servers configured."}
+INFO	java	proxy/proxy.go:299	Using favicon from data uri	{"length": 3086}
+INFO	java	proxy/proxy.go:472	listening for connections	{"addr": "0.0.0.0:25565"}
+```
+
+Gate is now running on `0.0.0.0:25565` and ready to accept connections!
+
+<Warning>
+The warning about "No backend servers configured" means Gate is running but has nowhere to route players. Let's fix that in the next step.
+</Warning>
+
+## Configure Backend Servers
+
+Gate needs to know about your Minecraft servers. You can generate a simple configuration file:
+
+```bash
+gate config -t simple -w
+```
+
+This creates a `config.yml` file in the current directory. Edit it to add your server addresses:
+
+```yaml config.yml
+config:
+  bind: 0.0.0.0:25565
+  onlineMode: true
+  
+  servers:
+    lobby: localhost:25566
+    survival: localhost:25567
+    creative: localhost:25568
+  
+  try:
+    - lobby
+    - survival
+```
+
+### Configuration Breakdown
+
+- **`bind`**: The address Gate listens on for player connections
+- **`onlineMode`**: Whether to authenticate players with Mojang (set to `false` for offline mode)
+- **`servers`**: A map of server names to their addresses
+- **`try`**: The order in which to try connecting players (fallback list)
+
+## Test Your Setup
+
+<Steps>
+  <Step title="Start your backend servers">
+    Make sure your Minecraft servers (lobby, survival, etc.) are running on the ports you specified.
+  </Step>
+  
+  <Step title="Restart Gate">
+    ```bash
+    gate
+    ```
+    
+    You should now see messages about registered servers:
+    ```
+    INFO	java	proxy/proxy.go:450	registered server	{"name": "lobby", "addr": "localhost:25566"}
+    INFO	java	proxy/proxy.go:450	registered server	{"name": "survival", "addr": "localhost:25567"}
+    ```
+  </Step>
+  
+  <Step title="Connect from Minecraft">
+    Open Minecraft and connect to `localhost:25565` (or your server's address). You should be connected through Gate to your lobby server!
+  </Step>
+  
+  <Step title="Try server switching">
+    Use the `/server` command in-game:
+    ```
+    /server survival
+    ```
+    
+    You'll be seamlessly transferred to the survival server without disconnecting!
+  </Step>
+</Steps>
+
+## Next Steps
+
+Now that you have Gate running, explore these features:
+
+<CardGroup cols={2}>
+  <Card title="Bedrock Cross-Play" icon="mobile" href="/features/bedrock-crossplay">
+    Enable Bedrock Edition players (Mobile, Console, Windows) to join your Java server
+  </Card>
+  
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Learn about all available configuration options
+  </Card>
+  
+  <Card title="Lite Mode" icon="feather" href="/features/lite-mode">
+    Use Gate as a lightweight hostname-based reverse proxy
+  </Card>
+  
+  <Card title="Security" icon="shield" href="/security/forwarding-modes">
+    Secure your network with player information forwarding
+  </Card>
+  
+  <Card title="Deployment" icon="cloud" href="/deployment/overview">
+    Deploy Gate to production with Docker or Kubernetes
+  </Card>
+  
+  <Card title="Plugin Development" icon="code" href="/developers/introduction">
+    Build custom plugins with Gate's Go API
+  </Card>
+</CardGroup>
+
+## Common Issues
+
+<AccordionGroup>
+  <Accordion title="Connection refused / Can't connect">
+    Make sure:
+    - Gate is running and listening on the correct address
+    - Your firewall allows connections on port 25565
+    - You're connecting to the right IP address
+  </Accordion>
+  
+  <Accordion title="Backend server connection failed">
+    Verify that:
+    - Your backend servers are actually running
+    - The addresses in `config.yml` are correct
+    - There are no firewall rules blocking Gate → server connections
+  </Accordion>
+  
+  <Accordion title="Players can't see each other">
+    This is expected! Gate forwards players to different backend servers. Use cross-server plugins or Gate's event system to sync player data.
+  </Accordion>
+  
+  <Accordion title="Unknown command: /server">
+    Make sure `builtinCommands: true` is set in your config.yml. If you want to use permissions, see [Built-in Commands](/features/builtin-commands).
+  </Accordion>
+</AccordionGroup>
+
+## Getting Help
+
+Need more help? Check out these resources:
+
+- **[Discord](https://discord.gg/6vMDqWE)** - Get help from the community
+- **[GitHub](https://github.com/minekube/gate)** - Report issues or contribute
+- **[Documentation](/introduction)** - Comprehensive guides and references
