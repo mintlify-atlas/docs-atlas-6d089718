@@ -1,0 +1,447 @@
+---
+title: Server Configuration
+description: Configure backend Minecraft servers, connection order, and fallback behavior in Gate proxy
+---
+
+# Server Configuration
+
+The `servers` section defines backend Minecraft servers that Gate will proxy connections to. You can register multiple servers and control how players connect to them.
+
+## Registering Servers
+
+Servers are registered using a simple name-to-address mapping:
+
+<ParamField path="config.servers" type="object">
+  Map of server names to addresses. Each server needs a unique name and a valid `host:port` address.
+  
+  ```yaml
+  servers:
+    lobby: localhost:25566
+    survival: localhost:25567
+    creative: localhost:25568
+    minigames: localhost:25569
+  ```
+</ParamField>
+
+### Server Name Requirements
+
+- Must be 1-63 characters long
+- Can contain letters, numbers, hyphens, and underscores
+- Must start and end with alphanumeric character
+- Case-sensitive for configuration, but commands are case-insensitive
+
+### Server Address Format
+
+Addresses must be in `host:port` format:
+
+```yaml
+servers:
+  # Local servers
+  lobby: localhost:25566
+  survival: 127.0.0.1:25567
+  
+  # Remote servers
+  hub: mc.example.com:25565
+  minigames: 192.168.1.100:25570
+  
+  # Domain with custom port
+  creative: play.creative.net:25565
+```
+
+## Try List
+
+The `try` list defines which servers to connect players to on login and when they're kicked from a server:
+
+<ParamField path="config.try" type="array">
+  Ordered list of server names to try connecting players to. Gate attempts each server in order until one succeeds.
+  
+  ```yaml
+  try:
+    - lobby
+    - hub
+    - survival
+  ```
+</ParamField>
+
+### How Try List Works
+
+1. **On Login**: Gate connects players to the first available server in the try list
+2. **On Kick**: If a player is kicked from a server, Gate tries to connect them to the next server in the list
+3. **Fallback**: If all servers fail, the player is disconnected with an error message
+
+### Example Configurations
+
+<CodeGroup>
+```yaml Basic
+config:
+  servers:
+    lobby: localhost:25566
+    survival: localhost:25567
+    creative: localhost:25568
+  
+  try:
+    - lobby  # Always try lobby first
+    - survival  # Fall back to survival
+```
+
+```yaml Load Balanced
+config:
+  servers:
+    lobby-1: localhost:25566
+    lobby-2: localhost:25567
+    lobby-3: localhost:25568
+    survival: localhost:25569
+  
+  try:
+    - lobby-1  # Primary lobby
+    - lobby-2  # Secondary lobby
+    - lobby-3  # Tertiary lobby
+    - survival # Last resort fallback
+```
+
+```yaml Multi-Server Network
+config:
+  servers:
+    hub: hub.example.com:25565
+    lobby: lobby.example.com:25565
+    survival-1: survival1.example.com:25565
+    survival-2: survival2.example.com:25565
+    creative: creative.example.com:25565
+    minigames: minigames.example.com:25565
+  
+  try:
+    - hub
+    - lobby
+```
+</CodeGroup>
+
+## Complete Example
+
+Here's a complete server configuration for a typical multi-server network:
+
+```yaml config.yml
+config:
+  bind: 0.0.0.0:25565
+  onlineMode: true
+  
+  # Register all backend servers
+  servers:
+    # Main servers
+    lobby: localhost:25566
+    hub: localhost:25567
+    
+    # Game mode servers
+    survival: localhost:25568
+    creative: localhost:25569
+    skyblock: localhost:25570
+    
+    # Minigame servers
+    bedwars: localhost:25571
+    skywars: localhost:25572
+    
+    # Development servers
+    dev-lobby: localhost:25580
+    dev-survival: localhost:25581
+  
+  # Try servers in this order on login/fallback
+  try:
+    - lobby
+    - hub
+    - survival
+  
+  # Optional: Reconnect players when server disconnects unexpectedly
+  failoverOnUnexpectedServerDisconnect: true
+```
+
+## Failover Behavior
+
+<ParamField path="config.failoverOnUnexpectedServerDisconnect" type="boolean" default="true">
+  When enabled, Gate automatically tries to reconnect players to another server when they're unexpectedly disconnected from a backend server.
+  
+  ```yaml
+  failoverOnUnexpectedServerDisconnect: true
+  ```
+</ParamField>
+
+### Failover Examples
+
+**Scenario 1: Server Crash**
+- Player is on `survival` server
+- `survival` crashes and disconnects player
+- Gate tries to connect player to next server in `try` list
+- Player ends up on `lobby` (or disconnected if all try servers fail)
+
+**Scenario 2: Player Kicked**
+- Player is kicked from `creative` server
+- Gate checks the try list starting from the first server
+- Player is connected to first available server (usually `lobby`)
+
+**Scenario 3: Server Shutdown**
+- `hub` server sends shutdown packet
+- Gate respects the shutdown and tries next server
+- Player seamlessly connects to next available server
+
+## Server Commands
+
+Gate provides built-in commands for players to switch between servers:
+
+<ParamField path="config.builtinCommands" type="boolean" default="true">
+  Enable built-in proxy commands like `/server`
+  
+  ```yaml
+  builtinCommands: true
+  ```
+</ParamField>
+
+<ParamField path="config.requireBuiltinCommandPermissions" type="boolean" default="false">
+  Require permissions to use built-in commands. Set to `true` in production to control who can switch servers.
+  
+  ```yaml
+  requireBuiltinCommandPermissions: false
+  ```
+</ParamField>
+
+### Available Commands
+
+- `/server <name>` - Connect to a specific server
+- `/server` - Show current server and list available servers
+- `/glist` - Show player count across all servers
+
+### Permission Nodes
+
+When `requireBuiltinCommandPermissions` is enabled:
+
+- `gate.command.server` - Use `/server` command
+- `gate.command.server.<name>` - Connect to specific server
+- `gate.command.glist` - Use `/glist` command
+
+## Server Validation
+
+Gate validates server configuration on startup:
+
+### Validation Checks
+
+<Accordion title="Server Address Validation">
+  - Must be valid `host:port` format
+  - Host can be domain name, IPv4, or IPv6
+  - Port must be valid number (1-65535)
+  - DNS resolution happens at connection time, not validation
+</Accordion>
+
+<Accordion title="Server Name Validation">
+  - Must be unique
+  - Follow qualified name rules (1-63 chars, alphanumeric + hyphens/underscores)
+  - Cannot be empty or whitespace only
+</Accordion>
+
+<Accordion title="Try List Validation">
+  - All server names in `try` must exist in `servers`
+  - Warning if `try` list is empty
+  - Warning if no servers are configured
+</Accordion>
+
+### Common Validation Errors
+
+```bash
+# Invalid server address - missing port
+servers:
+  lobby: localhost  # ❌ Error: Invalid address, missing port
+  
+# Invalid server name in try list
+servers:
+  lobby: localhost:25566
+try:
+  - hub  # ❌ Error: "hub" not found in servers
+  
+# Duplicate server names
+servers:
+  lobby: localhost:25566
+  lobby: localhost:25567  # ❌ Error: Duplicate key
+```
+
+## Dynamic Server Management
+
+While servers are primarily configured in `config.yml`, you can also manage them dynamically:
+
+### Via Gate API
+
+When the Gate API is enabled:
+
+```bash
+# List servers
+curl http://localhost:8080/api/servers
+
+# Get server info
+curl http://localhost:8080/api/servers/lobby
+```
+
+### Via Extensions
+
+Gate extensions can register/unregister servers programmatically:
+
+```go
+// Register a new server
+proxy.Register(server.NewServerInfo(
+    "newserver",
+    net.ParseAddr("localhost:25577"),
+))
+
+// Unregister a server
+proxy.Unregister(serverInfo)
+```
+
+## Timeouts
+
+Configure how long Gate waits when connecting to backend servers:
+
+<ParamField path="config.connectionTimeout" type="duration" default="5s">
+  How long to wait when establishing connection to backend server
+  
+  ```yaml
+  connectionTimeout: 5s
+  ```
+</ParamField>
+
+<ParamField path="config.readTimeout" type="duration" default="30s">
+  How long to wait for data from backend server before timing out. Increase for Forge/modded servers.
+  
+  ```yaml
+  readTimeout: 30s  # Standard servers
+  readTimeout: 60s  # Forge/modded servers
+  ```
+</ParamField>
+
+### Duration Format
+
+Durations support these units:
+- `s` - seconds
+- `m` - minutes  
+- `h` - hours
+- `ms` - milliseconds
+
+Examples: `5s`, `30s`, `1m`, `500ms`, `1h30m`
+
+## Backend Server Requirements
+
+For Gate to proxy connections properly, backend servers must:
+
+1. **Be reachable** - Gate must be able to establish TCP connection
+2. **Use correct protocol** - Must be Minecraft Java Edition servers
+3. **Match player info forwarding** - Must have matching forwarding configuration
+4. **Handle offline UUIDs** - If Gate is in offline mode, backends should accept offline UUIDs
+
+### Backend Server Settings
+
+Recommended `server.properties` settings for backend servers:
+
+```properties
+# Backend servers should be in offline mode
+online-mode=false
+
+# Use backend port, not 25565
+server-port=25566
+
+# Optional: Prevent direct connections
+server-ip=127.0.0.1
+```
+
+See [Forwarding Configuration](/configuration/forwarding) for player info forwarding setup.
+
+## Load Balancing
+
+While Gate doesn't provide automatic load balancing in classic mode, you can achieve it with:
+
+### Manual Load Balancing
+
+Configure multiple servers in the try list:
+
+```yaml
+servers:
+  lobby-1: 192.168.1.101:25565
+  lobby-2: 192.168.1.102:25565
+  lobby-3: 192.168.1.103:25565
+
+try:
+  - lobby-1
+  - lobby-2
+  - lobby-3
+```
+
+Players connect to first available server. If `lobby-1` is full or offline, they go to `lobby-2`, etc.
+
+### Advanced Load Balancing
+
+For true load balancing, consider:
+
+1. **[Gate Lite Mode](/guide/lite)** - Built-in load balancing with multiple strategies (random, round-robin, least-connections)
+2. **[Forced Hosts](/configuration/forced-hosts)** - Route different hostnames to different server pools
+3. **External Load Balancer** - HAProxy, nginx, or cloud load balancer in front of multiple Gate instances
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Players can't connect to any server">
+    **Symptoms**: Players connect to Gate but get disconnected immediately
+    
+    **Checks**:
+    - Verify at least one server in `try` list is online and reachable
+    - Check server addresses are correct (host:port)
+    - Ensure backend servers are in offline mode
+    - Verify forwarding configuration matches between Gate and backends
+    - Check firewall rules allow Gate → backend connections
+  </Accordion>
+  
+  <Accordion title="Server not found in try list">
+    **Error**: `Fallback/try server "name" must be registered under servers`
+    
+    **Solution**: Add the server to the `servers` section:
+    ```yaml
+    servers:
+      name: localhost:25566  # Add this
+    try:
+      - name
+    ```
+  </Accordion>
+  
+  <Accordion title="Connection timeout errors">
+    **Symptoms**: "Connection timed out" errors when connecting to backends
+    
+    **Solutions**:
+    - Increase `connectionTimeout` (try 10s or 15s)
+    - Verify backend server is running and reachable
+    - Check network connectivity: `telnet backend-host 25566`
+    - Ensure no firewall blocking connections
+  </Accordion>
+  
+  <Accordion title="Read timeout with Forge servers">
+    **Symptoms**: Connection drops during login with Forge/modded servers
+    
+    **Solution**: Increase `readTimeout`:
+    ```yaml
+    readTimeout: 60s  # Or even higher for heavily modded servers
+    ```
+  </Accordion>
+  
+  <Accordion title="Players always connect to same server">
+    **Symptoms**: Multiple servers in try list, but players only go to first one
+    
+    **Explanation**: This is expected behavior - Gate tries servers in order and uses first available. For load balancing, use [Gate Lite mode](/guide/lite) or [Forced Hosts](/configuration/forced-hosts).
+  </Accordion>
+</AccordionGroup>
+
+## Related Configuration
+
+<CardGroup cols={2}>
+  <Card title="Forced Hosts" icon="globe" href="/configuration/forced-hosts">
+    Route players to specific servers based on connection hostname
+  </Card>
+  <Card title="Forwarding" icon="share-nodes" href="/configuration/forwarding">
+    Forward real player IPs and UUIDs to backend servers
+  </Card>
+  <Card title="Compression" icon="file-zipper" href="/configuration/compression">
+    Configure packet compression between proxy and backends
+  </Card>
+  <Card title="Status Ping" icon="signal" href="/configuration/status-ping">
+    Customize server list appearance and MOTD
+  </Card>
+</CardGroup>

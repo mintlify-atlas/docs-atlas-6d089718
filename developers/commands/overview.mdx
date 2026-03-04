@@ -1,0 +1,99 @@
+---
+title: "Commands Overview"
+description: "Learn about Gate's command system architecture and how to work with proxy commands."
+---
+
+# Commands Overview
+
+Gate provides a powerful command system built on top of the [Brigadier](https://github.com/Mojang/brigadier) library, allowing you to register custom proxy commands that players can execute.
+
+## Command Architecture
+
+Gate's command system consists of several key components:
+
+### Command Manager
+
+The `command.Manager` handles command registration and execution:
+
+```go
+type Manager struct { 
+    brigodier.Dispatcher 
+}
+```
+
+Source: `pkg/command/command.go:14-15`
+
+### Command Source
+
+The `Source` interface represents the command invoker (player or console):
+
+```go
+type Source interface {
+    permission.Subject
+    SendMessage(msg component.Component, opts ...MessageOption) error
+}
+```
+
+Source: `pkg/command/command.go:19-23`
+
+## Basic Concepts
+
+### Command Context
+
+Every command receives a `Context` containing:
+- Command arguments
+- Source (who executed the command)
+- Parsed parameters
+
+```go
+type Context struct {
+    *brigodier.CommandContext
+    Source
+}
+```
+
+### Command Execution
+
+Commands are executed through a pipeline:
+
+1. **Parse**: Command input is parsed into a `ParseResults`
+2. **Execute**: Parsed command is executed with context
+3. **Response**: Results are sent back to the source
+
+```go
+// Do combines Parse and Execute
+func (m *Manager) Do(ctx context.Context, src Source, command string) error
+```
+
+Source: `pkg/command/command.go:102-104`
+
+## Built-in Commands
+
+Gate includes several built-in commands:
+
+| Command | Description | Permission |
+|---------|-------------|-----------|
+| `/server` | Switch or list servers | `gate.command.server` |
+| `/glist` | List online players | `gate.command.glist` |
+| `/send` | Send player to server | `gate.command.send` |
+
+<Info>
+Built-in commands can be disabled via `builtinCommands: false` in config.yml.
+</Info>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Command Registration" icon="plus" href="/developers/commands/registration">
+    Learn how to register custom commands
+  </Card>
+  <Card title="Using Brigadier" icon="terminal" href="/developers/commands/brigadier">
+    Master Brigadier's node system
+  </Card>
+  <Card title="Permissions" icon="shield" href="/developers/commands/permissions">
+    Implement permission checks
+  </Card>
+  <Card title="Command Examples" icon="code" href="/developers/examples/command-plugin">
+    See complete command implementations
+  </Card>
+</CardGroup>

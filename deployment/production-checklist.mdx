@@ -1,0 +1,555 @@
+---
+title: Production Checklist
+description: Comprehensive checklist for deploying Gate proxy to production
+---
+
+Before deploying Gate to production, ensure you've completed all items in this checklist to maintain security, reliability, and optimal performance.
+
+## Security Configuration
+
+### Authentication & Player Security
+
+<Steps>
+  <Step title="Enable online mode">
+    Always use online mode in production to authenticate players with Mojang.
+    
+    ```yaml config.yml
+    config:
+      onlineMode: true
+    ```
+    
+    <Warning>
+      Setting `onlineMode: false` allows unauthenticated players and is a major security risk.
+    </Warning>
+  </Step>
+
+  <Step title="Configure forwarding mode">
+    Set up secure player information forwarding to backend servers.
+    
+    ```yaml config.yml
+    config:
+      forwarding:
+        mode: velocity  # Recommended: velocity or bungeeguard
+        velocitySecret: ${GATE_VELOCITY_SECRET}
+    ```
+    
+    **Available modes:**
+    - `velocity` - Modern, secure (recommended)
+    - `bungeeguard` - Token-based security
+    - `legacy` - BungeeCord compatibility (less secure)
+    - `none` - No forwarding (not recommended)
+    
+    <Info>
+      Store secrets in environment variables, never commit them to version control.
+    </Info>
+  </Step>
+
+  <Step title="Generate strong secrets">
+    Create cryptographically secure secrets for forwarding.
+    
+    ```bash
+    # Generate a secure random secret
+    openssl rand -base64 32
+    
+    # Or use uuidgen
+    uuidgen
+    ```
+    
+    Set as environment variable:
+    ```bash
+    export GATE_VELOCITY_SECRET="your-generated-secret-here"
+    ```
+  </Step>
+
+  <Step title="Enable force key authentication">
+    Enforce Minecraft 1.19+ security standards.
+    
+    ```yaml config.yml
+    config:
+      forceKeyAuthentication: true
+    ```
+  </Step>
+
+  <Step title="Require permissions for commands">
+    Prevent unauthorized access to proxy commands.
+    
+    ```yaml config.yml
+    config:
+      requireBuiltinCommandPermissions: true
+    ```
+  </Step>
+
+  <Step title="Disable untrusted plugin channels">
+    Protect against malicious backend servers.
+    
+    ```yaml config.yml
+    config:
+      bungeePluginChannelEnabled: false  # Set to false if backends are untrusted
+    ```
+  </Step>
+</Steps>
+
+### Network Security
+
+<Steps>
+  <Step title="Enable rate limiting">
+    Protect against DDoS and brute force attacks.
+    
+    ```yaml config.yml
+    config:
+      quota:
+        connections:
+          enabled: true
+          ops: 5      # Operations per second
+          burst: 10   # Burst capacity
+          maxEntries: 1000
+        logins:
+          enabled: true
+          ops: 0.4
+          burst: 3
+          maxEntries: 1000
+    ```
+  </Step>
+
+  <Step title="Configure proxy protocol (if behind load balancer)">
+    Preserve real client IP addresses.
+    
+    ```yaml config.yml
+    config:
+      proxyProtocol: true
+    ```
+    
+    <Warning>
+      Only enable if you're behind a trusted load balancer. Enabling this without a load balancer allows IP spoofing.
+    </Warning>
+  </Step>
+
+  <Step title="Secure API endpoint">
+    If using the HTTP API, bind to localhost or use proper authentication.
+    
+    ```yaml config.yml
+    api:
+      enabled: true
+      bind: localhost:8080  # Use localhost in production
+    ```
+    
+    For external access, use a reverse proxy with authentication:
+    ```nginx nginx.conf
+    location /api/ {
+      proxy_pass http://localhost:8080/;
+      auth_basic "Gate API";
+      auth_basic_user_file /etc/nginx/.htpasswd;
+    }
+    ```
+  </Step>
+
+  <Step title="Configure backend server addresses">
+    Use internal network addresses for backend servers.
+    
+    ```yaml config.yml
+    config:
+      servers:
+        lobby: 10.0.1.10:25565      # Internal IP
+        survival: 10.0.1.11:25565   # Internal IP
+        creative: 10.0.1.12:25565   # Internal IP
+    ```
+    
+    <Info>
+      Backend servers should never be directly exposed to the internet.
+    </Info>
+  </Step>
+
+  <Step title="Disable backend server online mode">
+    Backend servers should trust Gate's forwarding.
+    
+    ```properties server.properties
+    online-mode=false
+    ```
+    
+    Configure backend to accept forwarded player data based on your forwarding mode.
+  </Step>
+</Steps>
+
+## Performance Optimization
+
+<Steps>
+  <Step title="Optimize compression settings">
+    Balance between bandwidth and CPU usage.
+    
+    ```yaml config.yml
+    config:
+      compression:
+        threshold: 256  # Vanilla default
+        level: -1       # Default compression
+    ```
+    
+    **Recommendations:**
+    - High bandwidth, limited CPU: `level: 0` (no compression)
+    - Limited bandwidth: `level: 6` (higher compression)
+    - Balanced: `level: -1` (default)
+  </Step>
+
+  <Step title="Configure timeouts">
+    Adjust for your network conditions.
+    
+    ```yaml config.yml
+    config:
+      connectionTimeout: 5s
+      readTimeout: 30s  # Increase to 60s if using Forge
+    ```
+  </Step>
+
+  <Step title="Enable automatic reconnection">
+    Improve player experience during server issues.
+    
+    ```yaml config.yml
+    config:
+      failoverOnUnexpectedServerDisconnect: true
+    ```
+  </Step>
+
+  <Step title="Optimize server try list">
+    Order servers by priority and capacity.
+    
+    ```yaml config.yml
+    config:
+      try:
+        - lobby-1    # Primary lobby
+        - lobby-2    # Fallback lobby
+        - lobby-3    # Secondary fallback
+    ```
+  </Step>
+</Steps>
+
+## Monitoring & Observability
+
+<Steps>
+  <Step title="Enable health checks">
+    Configure gRPC health service for Kubernetes/load balancers.
+    
+    ```yaml config.yml
+    healthService:
+      enabled: true
+      bind: 0.0.0.0:9090
+    ```
+  </Step>
+
+  <Step title="Enable OpenTelemetry">
+    Export metrics and traces to your observability platform.
+    
+    ```yaml docker-compose.yml
+    environment:
+      - OTEL_SERVICE_NAME=gate-production
+      - OTEL_METRICS_ENABLED=true
+      - OTEL_TRACES_ENABLED=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317
+    ```
+  </Step>
+
+  <Step title="Configure logging">
+    Disable debug mode in production.
+    
+    ```yaml config.yml
+    config:
+      debug: false
+      status:
+        logPingRequests: false  # Reduce log noise
+    ```
+  </Step>
+
+  <Step title="Set up alerting">
+    Monitor critical metrics:
+    - Player connection failures
+    - Backend server availability
+    - High latency or packet loss
+    - Resource usage (CPU, memory)
+    - Error rates
+  </Step>
+</Steps>
+
+## High Availability
+
+<Steps>
+  <Step title="Deploy multiple instances">
+    Run at least 2 Gate instances for redundancy.
+    
+    ```yaml kubernetes
+    spec:
+      replicas: 3  # Minimum 2 for HA
+    ```
+  </Step>
+
+  <Step title="Configure load balancer health checks">
+    Use the gRPC health service endpoint.
+    
+    ```yaml
+    livenessProbe:
+      grpc:
+        port: 9090
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      failureThreshold: 3
+    
+    readinessProbe:
+      grpc:
+        port: 9090
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      failureThreshold: 2
+    ```
+  </Step>
+
+  <Step title="Set up resource limits">
+    Prevent resource exhaustion.
+    
+    ```yaml kubernetes
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "1000m"
+      limits:
+        memory: "2Gi"
+        cpu: "2000m"
+    ```
+  </Step>
+
+  <Step title="Configure pod disruption budgets">
+    Ensure minimum availability during updates.
+    
+    ```yaml
+    apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata:
+      name: gate-pdb
+    spec:
+      minAvailable: 2
+      selector:
+        matchLabels:
+          app: gate
+    ```
+  </Step>
+
+  <Step title="Enable graceful shutdown">
+    Configure custom shutdown message.
+    
+    ```yaml config.yml
+    config:
+      shutdownReason: |
+        §eServer maintenance in progress.
+        §7Please reconnect in a few moments.
+    ```
+  </Step>
+</Steps>
+
+## Configuration Validation
+
+<Steps>
+  <Step title="Test configuration locally">
+    Validate before deploying.
+    
+    ```bash
+    # Run Gate with your config
+    ./gate -config config.yml
+    
+    # Check for warnings or errors in logs
+    ```
+  </Step>
+
+  <Step title="Verify server connectivity">
+    Ensure all backend servers are reachable.
+    
+    ```bash
+    # Test from Gate's network
+    nc -zv 10.0.1.10 25565
+    nc -zv 10.0.1.11 25565
+    ```
+  </Step>
+
+  <Step title="Test player authentication">
+    Verify online mode and forwarding work correctly.
+    
+    1. Connect with a real Minecraft account
+    2. Verify UUID is correct on backend
+    3. Check player skin loads properly
+    4. Test server switching
+  </Step>
+
+  <Step title="Load testing">
+    Test with realistic player counts.
+    
+    ```bash
+    # Use minecraft-bot or similar tools
+    # Start with small numbers and increase gradually
+    ```
+  </Step>
+</Steps>
+
+## Backup & Disaster Recovery
+
+<Steps>
+  <Step title="Backup configuration">
+    Version control your config files.
+    
+    ```bash
+    git init
+    git add config.yml
+    git commit -m "Production configuration"
+    git push origin main
+    ```
+  </Step>
+
+  <Step title="Document secrets">
+    Store secrets securely (e.g., HashiCorp Vault, AWS Secrets Manager).
+    
+    ```bash
+    # Never commit secrets to git
+    echo "GATE_VELOCITY_SECRET=*" >> .gitignore
+    ```
+  </Step>
+
+  <Step title="Create rollback plan">
+    Document steps to revert to previous version.
+    
+    1. Keep previous Docker image tags
+    2. Maintain config backups
+    3. Test rollback procedure
+  </Step>
+
+  <Step title="Monitor deployment">
+    Watch for issues after deployment.
+    
+    ```bash
+    # Kubernetes
+    kubectl logs -f deployment/gate
+    
+    # Docker
+    docker logs -f gate
+    ```
+  </Step>
+</Steps>
+
+## Pre-Launch Checklist
+
+Before going live, verify:
+
+- [ ] Online mode is enabled
+- [ ] Forwarding mode is configured with strong secret
+- [ ] Rate limiting is enabled
+- [ ] Backend servers are configured correctly
+- [ ] Health checks are working
+- [ ] Monitoring and alerting are set up
+- [ ] Multiple instances are running (HA)
+- [ ] Load balancer is configured
+- [ ] Resource limits are set
+- [ ] Debug mode is disabled
+- [ ] Configuration is backed up
+- [ ] Rollback procedure is documented
+- [ ] Team is trained on operations
+- [ ] Incident response plan is ready
+
+## Post-Deployment
+
+<Steps>
+  <Step title="Monitor for 24-48 hours">
+    Watch metrics closely after launch:
+    - Player connection success rate
+    - Latency and performance
+    - Error logs
+    - Resource usage
+  </Step>
+
+  <Step title="Gather feedback">
+    Monitor community channels for issues:
+    - Connection problems
+    - Performance complaints
+    - Feature requests
+  </Step>
+
+  <Step title="Document operations">
+    Create runbooks for:
+    - Common issues and fixes
+    - Scaling procedures
+    - Update process
+    - Emergency procedures
+  </Step>
+
+  <Step title="Plan regular maintenance">
+    Schedule:
+    - Weekly: Review metrics and logs
+    - Monthly: Update to latest Gate version
+    - Quarterly: Security audit
+    - Annually: Architecture review
+  </Step>
+</Steps>
+
+## Common Production Issues
+
+### Issue: Players can't connect
+
+**Checklist:**
+- Verify Gate is running: `docker ps` or `kubectl get pods`
+- Check port is open: `nc -zv <gate-ip> 25565`
+- Review logs for errors
+- Verify firewall rules
+- Check rate limiting hasn't blocked legitimate players
+
+### Issue: Backend server connection failed
+
+**Checklist:**
+- Verify backend server is running
+- Check server address in config
+- Test network connectivity from Gate to backend
+- Verify forwarding is configured on backend
+- Check backend server logs
+
+### Issue: Players have wrong UUIDs
+
+**Checklist:**
+- Verify online mode is enabled on Gate
+- Check forwarding mode matches backend configuration
+- Ensure forwarding secret matches on all servers
+- Verify backend server is in offline mode
+
+### Issue: High memory usage
+
+**Solutions:**
+- Review compression settings
+- Check for connection leaks
+- Increase resource limits if needed
+- Monitor for DDoS attacks
+- Review quota settings
+
+## Security Incident Response
+
+If you suspect a security breach:
+
+1. **Immediate actions:**
+   - Review access logs
+   - Check for unauthorized configuration changes
+   - Verify forwarding secrets haven't been compromised
+
+2. **Containment:**
+   - Rotate forwarding secrets if compromised
+   - Update configuration on all servers
+   - Review and tighten security settings
+
+3. **Recovery:**
+   - Restore from known-good configuration
+   - Verify system integrity
+   - Monitor for continued suspicious activity
+
+4. **Post-incident:**
+   - Document what happened
+   - Update security procedures
+   - Train team on new procedures
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Monitoring Setup" icon="chart-line" href="/deployment/monitoring">
+    Configure metrics, logging, and health checks
+  </Card>
+  <Card title="Configuration Reference" icon="book" href="/guide/configuration">
+    Detailed configuration options
+  </Card>
+</CardGroup>

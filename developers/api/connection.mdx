@@ -1,0 +1,556 @@
+---
+title: Connection API
+description: Managing player connections to backend servers
+---
+
+The Connection API handles the lifecycle and state management of player connections to backend Minecraft servers.
+
+## Overview
+
+Key components:
+- `ConnectionRequest` - Request to connect a player to a server
+- `ConnectionResult` - Result of a connection attempt
+- `ServerConnection` - Active connection between player and server
+- Connection states and lifecycle management
+
+Source: `pkg/edition/java/proxy/server.go`
+
+## Connection Request
+
+A `ConnectionRequest` represents an intent to connect a player to a backend server.
+
+### Creating Connection Requests
+
+```go
+import (
+    "context"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+)
+
+// Get target server
+target := p.Server("lobby")
+if target == nil {
+    return fmt.Errorf("server not found")
+}
+
+// Create connection request for player
+request := player.CreateConnectionRequest(target)
+```
+
+<ParamField path="target" type="RegisteredServer" required>
+  The backend server to connect to.
+</ParamField>
+
+### Executing Connection Requests
+
+Connect the player to the server:
+
+```go
+// Execute the connection request
+ctx := context.Background()
+result, err := request.Connect(ctx)
+if err != nil {
+    return fmt.Errorf("connection error: %w", err)
+}
+
+// Handle the result
+if result.Successful() {
+    log.Info("player connected successfully")
+} else if result.AttemptedConnection() {
+    log.Warn("connection attempted but failed", 
+        "reason", result.Reason())
+} else {
+    log.Info("connection denied before attempt")
+}
+```
+
+<ParamField path="ctx" type="context.Context" required>
+  Context for the connection operation. Use for timeouts and cancellation.
+</ParamField>
+
+<ResponseField name="ConnectionResult" type="*ConnectionResult">
+  The result of the connection attempt.
+</ResponseField>
+
+<ResponseField name="error" type="error">
+  Error if the connection operation failed. Check the result for more details.
+</ResponseField>
+
+## Connection Result
+
+The `ConnectionResult` contains the outcome of a connection attempt.
+
+### Checking Success
+
+```go
+result, err := request.Connect(ctx)
+if err != nil {
+    return err
+}
+
+if result.Successful() {
+    // Connection succeeded
+    log.Info("player connected to server")
+    return nil
+}
+```
+
+<ResponseField name="Successful" type="bool">
+  Returns true if the connection was successful and the player is now on the server.
+</ResponseField>
+
+### Connection Attempt Status
+
+Check if a connection was attempted:
+
+```go
+if result.AttemptedConnection() {
+    // Connection was attempted but may have failed
+    if !result.Successful() {
+        // Connection failed after attempting
+        reason := result.Reason()
+        if reason != nil {
+            log.Warn("connection failed", "reason", reason)
+            player.SendMessage(reason)
+        }
+    }
+} else {
+    // Connection was denied before attempting
+    // (e.g., by a PreServerConnectEvent handler)
+    log.Info("connection denied by event handler")
+}
+```
+
+<ResponseField name="AttemptedConnection" type="bool">
+  Returns true if a connection to the server was actually attempted (even if it failed).
+</ResponseField>
+
+### Getting Connection Reason
+
+Retrieve the component explaining the connection result:
+
+```go
+reason := result.Reason()
+if reason != nil {
+    // Send reason to player
+    player.SendMessage(reason)
+    
+    // Log the reason
+    reasonStr := componentToString(reason)
+    log.Info("connection result", "reason", reasonStr)
+}
+```
+
+<ResponseField name="Reason" type="component.Component">
+  Returns the component explaining the result, or nil if no reason is available.
+</ResponseField>
+
+## Server Connection
+
+A `ServerConnection` represents an active connection between a player and a backend server.
+
+Source: `pkg/edition/java/proxy/server.go:217`
+
+### Getting Server Connection
+
+```go
+// Get from player
+conn := player.CurrentServer()
+if conn == nil {
+    log.Info("player not connected to any server")
+    return
+}
+
+log.Info("player server connection",
+    "player", conn.Player().Username(),
+    "server", conn.Server().ServerInfo().Name(),
+)
+```
+
+### Connection Properties
+
+Access connection details:
+
+```go
+// Get the server
+server := conn.Server()
+info := server.ServerInfo()
+log.Info("connected server",
+    "name", info.Name(),
+    "addr", info.Addr().String(),
+)
+
+// Get the player
+player := conn.Player()
+log.Info("connected player",
+    "username", player.Username(),
+    "id", player.ID(),
+)
+```
+
+<ResponseField name="Server" type="RegisteredServer">
+  The backend server this connection is connected to.
+</ResponseField>
+
+<ResponseField name="Player" type="Player">
+  The player associated with this connection.
+</ResponseField>
+
+## Connection State Management
+
+The connection system manages various states during the connection lifecycle.
+
+### Connection Phases
+
+Connections go through several phases:
+
+1. **Handshake** - Initial connection setup
+2. **Login** - Authentication with backend server
+3. **Play** - Active gameplay state
+4. **Config** - Configuration state (1.20.2+)
+
+```go
+// Connection state is managed internally
+// Access through the connection's properties
+if conn := player.CurrentServer(); conn != nil {
+    server := conn.Server()
+    log.Info("player in play state",
+        "server", server.ServerInfo().Name())
+}
+```
+
+### Graceful Disconnection
+
+Connections track whether they were gracefully disconnected:
+
+```go
+// The connection system handles graceful disconnection
+// When switching servers, the old connection is gracefully closed
+oldServer := player.CurrentServer()
+if oldServer != nil {
+    oldServerName := oldServer.Server().ServerInfo().Name()
+    log.Info("disconnecting from old server", 
+        "server", oldServerName)
+}
+
+// Connect to new server
+newRequest := player.CreateConnectionRequest(newServer)
+result, _ := newRequest.Connect(ctx)
+if result.Successful() {
+    // Old connection was gracefully closed
+    log.Info("switched servers successfully")
+}
+```
+
+## Connection Events
+
+The connection system fires events during the lifecycle:
+
+### Server Pre-Connect Event
+
+Called before a connection is attempted:
+
+```go
+import "go.minekube.com/gate/pkg/edition/java/proxy"
+
+// Subscribe to pre-connect event
+p.Event().Subscribe(&proxy.ServerPreConnectEvent{}, 
+    func(e *proxy.ServerPreConnectEvent) {
+        player := e.Player()
+        original := e.OriginalServer()
+        
+        log.Info("player connecting",
+            "player", player.Username(),
+            "server", original.ServerInfo().Name(),
+        )
+        
+        // Deny connection
+        if someCondition {
+            e.Deny()
+            player.SendMessage(&component.Text{
+                Content: "You cannot connect to this server",
+            })
+            return
+        }
+        
+        // Redirect to different server
+        if shouldRedirect {
+            redirectServer := p.Server("alternative")
+            if redirectServer != nil {
+                e.SetServer(redirectServer)
+            }
+        }
+    },
+)
+```
+
+### Server Connected Event
+
+Called when a player successfully connects:
+
+```go
+// Subscribe to server connected event
+p.Event().Subscribe(&proxy.ServerConnectedEvent{}, 
+    func(e *proxy.ServerConnectedEvent) {
+        player := e.Player()
+        server := e.Server()
+        previousServer := e.PreviousServer() // may be nil
+        
+        if previousServer != nil {
+            log.Info("player switched servers",
+                "player", player.Username(),
+                "from", previousServer.ServerInfo().Name(),
+                "to", server.ServerInfo().Name(),
+            )
+        } else {
+            log.Info("player joined server",
+                "player", player.Username(),
+                "server", server.ServerInfo().Name(),
+            )
+        }
+    },
+)
+```
+
+### Server Disconnect Event
+
+Called when a player disconnects from a server:
+
+```go
+// Subscribe to server disconnect event  
+p.Event().Subscribe(&proxy.ServerDisconnectEvent{}, 
+    func(e *proxy.ServerDisconnectEvent) {
+        player := e.Player()
+        server := e.Server()
+        
+        log.Info("player left server",
+            "player", player.Username(),
+            "server", server.ServerInfo().Name(),
+        )
+        
+        // Handle unexpected disconnection
+        if reason := e.DisconnectReason(); reason != nil {
+            log.Warn("unexpected disconnect", "reason", reason)
+            
+            // Try to connect to fallback server
+            fallback := p.Server("lobby")
+            if fallback != nil {
+                request := player.CreateConnectionRequest(fallback)
+                request.Connect(context.Background())
+            }
+        }
+    },
+)
+```
+
+## Connection Timeout
+
+Configure connection timeouts using context:
+
+```go
+import "time"
+
+// Create connection with timeout
+ctx, cancel := context.WithTimeout(
+    context.Background(),
+    10*time.Second,
+)
+defer cancel()
+
+request := player.CreateConnectionRequest(server)
+result, err := request.Connect(ctx)
+if err != nil {
+    if errors.Is(err, context.DeadlineExceeded) {
+        log.Warn("connection timed out")
+        player.SendMessage(&component.Text{
+            Content: "Connection timed out",
+        })
+    }
+    return err
+}
+```
+
+## Plugin Messages via Connection
+
+Send plugin messages through the server connection:
+
+```go
+import "go.minekube.com/gate/pkg/edition/java/proxy/message"
+
+// Get current server connection
+conn := player.CurrentServer()
+if conn == nil {
+    return errors.New("not connected to server")
+}
+
+// Send plugin message to backend
+channel := message.MinecraftNamespace("mybrand")
+data := []byte{0x01, 0x02, 0x03}
+err := conn.SendPluginMessage(channel, data)
+if err != nil {
+    return fmt.Errorf("failed to send message: %w", err)
+}
+```
+
+<ParamField path="identifier" type="message.ChannelIdentifier" required>
+  The plugin message channel.
+</ParamField>
+
+<ParamField path="data" type="[]byte" required>
+  The message payload.
+</ParamField>
+
+## Complete Example
+
+```go
+package main
+
+import (
+    "context"
+    "errors"
+    "fmt"
+    "time"
+    
+    "go.minekube.com/common/minecraft/component"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+)
+
+// ConnectPlayerToServer safely connects a player to a server with retry logic
+func ConnectPlayerToServer(
+    player proxy.Player,
+    server proxy.RegisteredServer,
+    timeout time.Duration,
+    maxRetries int,
+) error {
+    var lastErr error
+    
+    for attempt := 0; attempt < maxRetries; attempt++ {
+        if attempt > 0 {
+            log.Info("retrying connection",
+                "attempt", attempt+1,
+                "max", maxRetries,
+            )
+            time.Sleep(time.Second * time.Duration(attempt))
+        }
+        
+        // Create context with timeout
+        ctx, cancel := context.WithTimeout(
+            context.Background(),
+            timeout,
+        )
+        defer cancel()
+        
+        // Create and execute connection request
+        request := player.CreateConnectionRequest(server)
+        result, err := request.Connect(ctx)
+        
+        if err != nil {
+            lastErr = err
+            if errors.Is(err, context.DeadlineExceeded) {
+                log.Warn("connection timeout", "attempt", attempt+1)
+                continue
+            }
+            return fmt.Errorf("connection error: %w", err)
+        }
+        
+        if result.Successful() {
+            // Success!
+            log.Info("player connected",
+                "player", player.Username(),
+                "server", server.ServerInfo().Name(),
+                "attempts", attempt+1,
+            )
+            
+            player.SendMessage(&component.Text{
+                Content: fmt.Sprintf(
+                    "Connected to %s",
+                    server.ServerInfo().Name(),
+                ),
+            })
+            return nil
+        }
+        
+        if !result.AttemptedConnection() {
+            // Connection was denied before attempt (event handler)
+            return errors.New("connection denied")
+        }
+        
+        // Connection attempted but failed
+        if reason := result.Reason(); reason != nil {
+            player.SendMessage(reason)
+            lastErr = fmt.Errorf("connection failed: %v", reason)
+        } else {
+            lastErr = errors.New("connection failed")
+        }
+    }
+    
+    return fmt.Errorf("failed after %d attempts: %w", 
+        maxRetries, lastErr)
+}
+
+// HandleServerSwitch manages switching between servers
+func HandleServerSwitch(
+    player proxy.Player,
+    p *proxy.Proxy,
+    targetName string,
+) error {
+    // Get target server
+    target := p.Server(targetName)
+    if target == nil {
+        return fmt.Errorf("server %s not found", targetName)
+    }
+    
+    // Check if already on target
+    current := player.CurrentServer()
+    if current != nil {
+        currentName := current.Server().ServerInfo().Name()
+        if currentName == targetName {
+            player.SendMessage(&component.Text{
+                Content: "You are already on this server!",
+            })
+            return nil
+        }
+        
+        log.Info("switching servers",
+            "player", player.Username(),
+            "from", currentName,
+            "to", targetName,
+        )
+    }
+    
+    // Attempt connection with retries
+    err := ConnectPlayerToServer(
+        player,
+        target,
+        15*time.Second,  // timeout
+        3,               // max retries
+    )
+    
+    if err != nil {
+        log.Error(err, "failed to switch servers")
+        
+        // Try fallback if current is nil
+        if current == nil {
+            fallback := p.Server("lobby")
+            if fallback != nil {
+                log.Info("connecting to fallback server")
+                return ConnectPlayerToServer(
+                    player, fallback,
+                    15*time.Second, 1,
+                )
+            }
+        }
+        
+        return err
+    }
+    
+    return nil
+}
+```
+
+## See Also
+
+- [Proxy API](/developers/api/proxy) - Main proxy interface
+- [Player API](/developers/api/player) - Player management
+- [Server API](/developers/api/server) - Server registration and info
+- [Events Guide](/developers/events) - Connection-related events

@@ -1,0 +1,258 @@
+---
+title: Events Overview
+description: Learn about Gate's event-driven architecture and how to subscribe to events in your Minecraft proxy plugins
+---
+
+Gate provides a powerful event system that allows you to listen to and modify events that occur in the proxy. Events are the primary way to communicate between your code and Gate, making it easy to extend the proxy's functionality without modifying its core.
+
+## Event Architecture
+
+Gate's event system is built on the `github.com/robinbraemer/event` package, providing a type-safe, high-performance event bus for Go applications.
+
+### Key Components
+
+#### Event Manager
+
+The `event.Manager` is the central component that handles event subscriptions and dispatching. You can access it from the proxy instance:
+
+```go
+mgr := proxy.Event()
+```
+
+The event manager is responsible for:
+- Managing event subscriptions
+- Dispatching events to registered handlers
+- Handling event priorities
+- Managing the event lifecycle
+
+#### Event Types
+
+Gate defines numerous event types in `pkg/edition/java/proxy/events.go`. Each event is a Go struct that contains relevant data and methods for that specific event. Common event categories include:
+
+- **Connection Events**: `ConnectionEvent`, `ConnectionHandshakeEvent`
+- **Authentication Events**: `PreLoginEvent`, `LoginEvent`, `PostLoginEvent`
+- **Player Events**: `DisconnectEvent`, `PlayerChatEvent`, `PlayerSettingsChangedEvent`
+- **Server Events**: `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`
+- **Lifecycle Events**: `ReadyEvent`, `PreShutdownEvent`, `ShutdownEvent`
+- **Plugin Message Events**: `PluginMessageEvent`, `PlayerChannelRegisterEvent`
+
+## Subscribing to Events
+
+To handle an event, you subscribe a handler function to the event manager using `event.Subscribe`:
+
+```go
+import (
+    "github.com/robinbraemer/event"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+    "go.minekube.com/common/minecraft/component"
+)
+
+func setupEvents(p *proxy.Proxy) {
+    // Get the event manager
+    mgr := p.Event()
+
+    // Subscribe to PreLoginEvent with priority 0
+    event.Subscribe(mgr, 0, func(e *proxy.PreLoginEvent) {
+        username := e.Username()
+        
+        // Check if player is allowed to join
+        if isBanned(username) {
+            e.Deny(&component.Text{
+                Content: "You are banned from this server.",
+            })
+        }
+    })
+}
+```
+
+### Subscription Syntax
+
+The `event.Subscribe` function has the following signature:
+
+```go
+event.Subscribe(manager event.Manager, priority int, handler func(E))
+```
+
+- **manager**: The event manager instance (from `proxy.Event()`)
+- **priority**: Handler execution order (lower values execute first)
+- **handler**: Your event handler function that receives the event
+
+## Event Priorities
+
+Event handlers are executed in order of their priority, from lowest to highest. This allows you to control the execution order when multiple handlers are registered for the same event.
+
+```go
+// This handler runs first (priority -100)
+event.Subscribe(mgr, -100, func(e *proxy.LoginEvent) {
+    // Early validation logic
+})
+
+// This handler runs second (priority 0)
+event.Subscribe(mgr, 0, func(e *proxy.LoginEvent) {
+    // Normal handling logic
+})
+
+// This handler runs last (priority 100)
+event.Subscribe(mgr, 100, func(e *proxy.LoginEvent) {
+    // Cleanup or final processing
+})
+```
+
+Common priority conventions:
+- **Negative priorities** (-100, -50): Early/pre-processing handlers
+- **Priority 0**: Normal/default handlers
+- **Positive priorities** (50, 100): Late/post-processing handlers
+
+## Event Cancellation
+
+Many events support cancellation or modification of their behavior. Events typically provide methods to allow, deny, or modify the default action:
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.PreLoginEvent) {
+    // Deny the login
+    e.Deny(&component.Text{Content: "Server is in maintenance"})
+})
+
+event.Subscribe(mgr, 0, func(e *proxy.ServerPreConnectEvent) {
+    // Cancel the server connection
+    e.Deny()
+    
+    // Or redirect to a different server
+    lobbyServer := proxy.Server("lobby")
+    if lobbyServer != nil {
+        e.Allow(lobbyServer)
+    }
+})
+```
+
+## Modifying Events
+
+Some events allow you to modify data before it's processed:
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.PlayerChatEvent) {
+    // Get the original message
+    original := e.Original()
+    
+    // Modify the message
+    modified := strings.ReplaceAll(original, "bad_word", "***")
+    e.SetMessage(modified)
+})
+
+event.Subscribe(mgr, 0, func(e *proxy.GameProfileRequestEvent) {
+    // Customize the player's game profile
+    original := e.Original()
+    
+    // Create a custom profile (e.g., for skin changes)
+    customProfile := profile.GameProfile{
+        Name: original.Name,
+        ID:   original.ID,
+        Properties: []profile.Property{
+            // Custom skin properties
+        },
+    }
+    
+    e.SetGameProfile(customProfile)
+})
+```
+
+## Fire Events
+
+While most events are fired automatically by Gate, you can also fire custom events or trigger existing event types:
+
+```go
+// Fire an event to all subscribers
+mgr.Fire(&proxy.ReadyEvent{
+    // Event data
+})
+```
+
+The `Fire` method:
+- Executes all registered handlers in priority order
+- Blocks until all handlers complete
+- Passes the event to each handler
+
+## Event Handling Best Practices
+
+### 1. Keep Handlers Fast
+
+Event handlers should execute quickly, especially for high-frequency events like `PingEvent`:
+
+```go
+// Good: Fast synchronous handler
+event.Subscribe(mgr, 0, func(e *proxy.PingEvent) {
+    ping := e.Ping()
+    ping.Description = &component.Text{Content: "Welcome!"}
+})
+
+// Bad: Slow blocking operation
+event.Subscribe(mgr, 0, func(e *proxy.PingEvent) {
+    // Don't do this - it will slow down all pings!
+    time.Sleep(5 * time.Second)
+})
+```
+
+### 2. Handle Errors Gracefully
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.LoginEvent) {
+    player := e.Player()
+    
+    // Handle potential errors
+    if err := checkPlayerStatus(player); err != nil {
+        // Log the error
+        log.Error(err, "failed to check player status")
+        
+        // Decide whether to deny login
+        if isCriticalError(err) {
+            e.Deny(&component.Text{
+                Content: "Login failed: " + err.Error(),
+            })
+        }
+    }
+})
+```
+
+### 3. Use Type Safety
+
+Gate's event system is fully type-safe. You always receive the correct event type:
+
+```go
+// Type-safe event handling
+event.Subscribe(mgr, 0, func(e *proxy.DisconnectEvent) {
+    // e is guaranteed to be *proxy.DisconnectEvent
+    player := e.Player()
+    status := e.LoginStatus()
+    // ...
+})
+```
+
+### 4. Check for Nil Values
+
+Some event fields may be nil depending on the context:
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.ServerPostConnectEvent) {
+    player := e.Player()
+    previousServer := e.PreviousServer()
+    
+    // PreviousServer may be nil on initial connection
+    if previousServer != nil {
+        log.Info("Player switched servers",
+            "player", player.Username(),
+            "from", previousServer.ServerInfo().Name(),
+        )
+    } else {
+        log.Info("Player joined for the first time",
+            "player", player.Username(),
+        )
+    }
+})
+```
+
+## Next Steps
+
+- Learn about [Lifecycle Events](/developers/events/lifecycle)
+- Explore [Player Events](/developers/events/player-events)
+- Discover [Server Events](/developers/events/server-events)
+- View all available events in the [source code](https://github.com/minekube/gate/blob/master/pkg/edition/java/proxy/events.go)

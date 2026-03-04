@@ -1,0 +1,399 @@
+---
+title: Lifecycle Events
+description: Handle proxy initialization and shutdown events in Gate
+---
+
+Lifecycle events allow you to hook into the proxy's startup and shutdown phases, enabling proper initialization and cleanup of your plugin resources.
+
+## Proxy Lifecycle
+
+Gate's proxy goes through several distinct phases during its lifetime:
+
+1. **Initialization**: Proxy is created with configuration
+2. **Ready**: Proxy starts listening for connections
+3. **Running**: Proxy handles player connections and server communication
+4. **Pre-Shutdown**: Proxy stops accepting new connections
+5. **Shutdown**: Proxy disconnects all players and cleans up resources
+
+## ReadyEvent
+
+The `ReadyEvent` is fired once the proxy has successfully initialized and is ready to serve connections. This is the ideal place to perform post-initialization setup.
+
+### Event Structure
+
+```go
+type ReadyEvent struct {
+    addr string // The address the proxy is listening on
+}
+
+// Addr returns the address the proxy is listening on
+func (r *ReadyEvent) Addr() string
+```
+
+### When It's Fired
+
+- After the proxy successfully binds to its listening address
+- Before any player connections are accepted
+- May be triggered multiple times on config reloads
+
+### Example Usage
+
+```go
+import (
+    "github.com/robinbraemer/event"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+)
+
+func setupLifecycle(p *proxy.Proxy) {
+    mgr := p.Event()
+    
+    event.Subscribe(mgr, 0, func(e *proxy.ReadyEvent) {
+        log.Info("Proxy is ready!", "address", e.Addr())
+        
+        // Initialize plugin resources
+        initializeDatabase()
+        startBackgroundTasks()
+        loadPluginData()
+        
+        // Register dynamic servers
+        registerBackendServers(p)
+    })
+}
+```
+
+### Use Cases
+
+- **Database Initialization**: Connect to databases or external services
+- **Dynamic Server Registration**: Register backend servers programmatically
+- **Background Tasks**: Start periodic tasks or workers
+- **Plugin Communication**: Notify other systems that the proxy is online
+- **Metrics Collection**: Initialize monitoring and metrics systems
+
+## PreShutdownEvent
+
+The `PreShutdownEvent` is fired after the proxy has stopped accepting new connections but before any players are disconnected. This is your last opportunity to interact with connected players.
+
+### Event Structure
+
+```go
+type PreShutdownEvent struct {
+    reason component.Component // may be nil
+}
+
+// Reason returns the shutdown reason used to disconnect players with
+// May be nil!
+func (s *PreShutdownEvent) Reason() component.Component
+
+// SetReason sets the shutdown reason used to disconnect players with
+func (s *PreShutdownEvent) SetReason(reason component.Component)
+```
+
+### When It's Fired
+
+- After the proxy stops accepting new connections
+- Before any players are disconnected
+- The proxy will wait for all event listeners to complete
+
+### Example Usage
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.PreShutdownEvent) {
+    log.Info("Proxy is shutting down")
+    
+    // Customize the disconnect reason
+    e.SetReason(&component.Text{
+        Content: "Server is restarting. Please reconnect in a moment.",
+        S: component.Style{
+            Color: component.Yellow,
+        },
+    })
+    
+    // Transfer players to another proxy
+    transferPlayersToFallbackProxy()
+    
+    // Save player data
+    saveAllPlayerData()
+    
+    // Notify players of shutdown
+    notifyConnectedPlayers("Server shutting down in 5 seconds...")
+})
+```
+
+### Use Cases
+
+- **Player Transfer**: Transfer players to another proxy instance
+- **Data Persistence**: Save player data before disconnection
+- **Custom Disconnect Messages**: Provide informative shutdown reasons
+- **Graceful Degradation**: Notify external services of the shutdown
+- **Cleanup Preparation**: Prepare for final cleanup operations
+
+## ShutdownEvent
+
+The `ShutdownEvent` is fired after the proxy has stopped accepting connections and after `PreShutdownEvent`, but before the proxy process exits.
+
+### Event Structure
+
+```go
+type ShutdownEvent struct{}
+```
+
+### When It's Fired
+
+- After all players have been disconnected
+- Before the proxy process terminates
+- After `PreShutdownEvent` has been processed
+
+### Example Usage
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.ShutdownEvent) {
+    log.Info("Cleaning up proxy resources")
+    
+    // Stop background tasks
+    stopBackgroundWorkers()
+    
+    // Close external connections
+    disconnectFromDatabase()
+    closeAPIConnections()
+    
+    // Save final state
+    saveProxyState()
+    
+    // Release resources
+    releaseFileHandles()
+    clearCaches()
+})
+```
+
+### Use Cases
+
+- **Resource Cleanup**: Close connections, file handles, and other resources
+- **Background Task Termination**: Stop goroutines and worker pools
+- **Final Data Persistence**: Save any remaining state to disk
+- **External Service Notification**: Notify monitoring systems of shutdown
+- **Graceful Shutdown**: Ensure proper cleanup of plugin dependencies
+
+## Complete Lifecycle Example
+
+Here's a comprehensive example showing how to use all lifecycle events together:
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "sync"
+    "time"
+    
+    "github.com/robinbraemer/event"
+    "go.minekube.com/common/minecraft/component"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+)
+
+type MyPlugin struct {
+    proxy    *proxy.Proxy
+    db       *Database
+    workers  *WorkerPool
+    shutdown chan struct{}
+    wg       sync.WaitGroup
+}
+
+func NewPlugin(p *proxy.Proxy) *MyPlugin {
+    plugin := &MyPlugin{
+        proxy:    p,
+        shutdown: make(chan struct{}),
+    }
+    
+    plugin.registerLifecycleEvents()
+    return plugin
+}
+
+func (p *MyPlugin) registerLifecycleEvents() {
+    mgr := p.proxy.Event()
+    
+    // Handle proxy ready
+    event.Subscribe(mgr, 0, func(e *proxy.ReadyEvent) {
+        log.Printf("Proxy ready on %s", e.Addr())
+        
+        // Initialize database
+        var err error
+        p.db, err = ConnectDatabase("postgres://...")
+        if err != nil {
+            log.Printf("Failed to connect to database: %v", err)
+            return
+        }
+        log.Println("Database connected")
+        
+        // Start background workers
+        p.workers = NewWorkerPool(5)
+        p.workers.Start()
+        
+        // Start periodic tasks
+        p.wg.Add(1)
+        go p.runPeriodicTasks()
+        
+        log.Println("Plugin fully initialized")
+    })
+    
+    // Handle pre-shutdown
+    event.Subscribe(mgr, 0, func(e *proxy.PreShutdownEvent) {
+        log.Println("Pre-shutdown initiated")
+        
+        // Set a friendly disconnect message
+        e.SetReason(&component.Text{
+            Content: "Server is restarting\nPlease reconnect in 30 seconds",
+            S: component.Style{
+                Color: component.Gold,
+            },
+        })
+        
+        // Save all player data
+        if err := p.saveAllPlayers(); err != nil {
+            log.Printf("Error saving player data: %v", err)
+        }
+        
+        log.Println("Pre-shutdown complete")
+    })
+    
+    // Handle shutdown
+    event.Subscribe(mgr, 0, func(e *proxy.ShutdownEvent) {
+        log.Println("Shutdown initiated")
+        
+        // Signal shutdown to background tasks
+        close(p.shutdown)
+        
+        // Wait for background tasks to complete (with timeout)
+        done := make(chan struct{})
+        go func() {
+            p.wg.Wait()
+            close(done)
+        }()
+        
+        select {
+        case <-done:
+            log.Println("Background tasks completed")
+        case <-time.After(10 * time.Second):
+            log.Println("Background tasks timed out")
+        }
+        
+        // Stop workers
+        if p.workers != nil {
+            p.workers.Stop()
+        }
+        
+        // Close database
+        if p.db != nil {
+            if err := p.db.Close(); err != nil {
+                log.Printf("Error closing database: %v", err)
+            } else {
+                log.Println("Database closed")
+            }
+        }
+        
+        log.Println("Shutdown complete")
+    })
+}
+
+func (p *MyPlugin) runPeriodicTasks() {
+    defer p.wg.Done()
+    
+    ticker := time.NewTicker(1 * time.Minute)
+    defer ticker.Stop()
+    
+    for {
+        select {
+        case <-ticker.C:
+            // Perform periodic task
+            p.cleanupOldData()
+        case <-p.shutdown:
+            log.Println("Stopping periodic tasks")
+            return
+        }
+    }
+}
+
+func (p *MyPlugin) saveAllPlayers() error {
+    for _, player := range p.proxy.Players() {
+        if err := p.db.SavePlayer(player); err != nil {
+            return err
+        }
+    }
+    return nil
+}
+
+func (p *MyPlugin) cleanupOldData() {
+    // Periodic cleanup logic
+}
+```
+
+## Best Practices
+
+### 1. Handle Initialization Failures
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.ReadyEvent) {
+    if err := initializePlugin(); err != nil {
+        log.Error(err, "Failed to initialize plugin")
+        // Decide whether to continue or shutdown
+        return
+    }
+})
+```
+
+### 2. Use Timeouts for Cleanup
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.ShutdownEvent) {
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+    
+    if err := cleanupWithContext(ctx); err != nil {
+        log.Error(err, "Cleanup failed or timed out")
+    }
+})
+```
+
+### 3. Handle Multiple Ready Events
+
+Since `ReadyEvent` may fire multiple times during config reloads, ensure your initialization is idempotent:
+
+```go
+var initialized bool
+
+event.Subscribe(mgr, 0, func(e *proxy.ReadyEvent) {
+    if initialized {
+        // Handle reload
+        reloadConfiguration()
+        return
+    }
+    
+    // First-time initialization
+    initialize()
+    initialized = true
+})
+```
+
+### 4. Log Lifecycle Events
+
+Always log lifecycle events for debugging and monitoring:
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.ReadyEvent) {
+    log.Info("Proxy ready", "address", e.Addr())
+})
+
+event.Subscribe(mgr, 0, func(e *proxy.PreShutdownEvent) {
+    log.Info("Proxy shutting down", "reason", e.Reason())
+})
+
+event.Subscribe(mgr, 0, func(e *proxy.ShutdownEvent) {
+    log.Info("Proxy shutdown complete")
+})
+```
+
+## See Also
+
+- [Events Overview](/developers/events/overview)
+- [Player Events](/developers/events/player-events)
+- [Server Events](/developers/events/server-events)

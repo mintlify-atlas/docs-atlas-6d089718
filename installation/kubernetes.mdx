@@ -1,0 +1,585 @@
+---
+title: Kubernetes Installation
+description: Deploy Gate on Kubernetes with manifests, Kustomize, and complete network examples
+---
+
+Gate's Docker images are designed for Kubernetes deployments, providing scalable and reliable proxy infrastructure for your Minecraft network.
+
+## Prerequisites
+
+Before deploying Gate to Kubernetes, ensure you have:
+
+<CardGroup cols={2}>
+  <Card title="Kubernetes Cluster" icon="dharmachakra">
+    Running cluster (kind, minikube, k3s, k3d, GKE, EKS, AKS, etc.)
+  </Card>
+  <Card title="kubectl" icon="terminal">
+    Kubernetes CLI tool installed and configured
+  </Card>
+  <Card title="Kustomize" icon="layer-group">
+    (Optional) For advanced manifest management
+  </Card>
+  <Card title="Lens Desktop" icon="eye">
+    (Optional) Kubernetes IDE for easier management
+  </Card>
+</CardGroup>
+
+<Tip>
+  **New to Kubernetes?** Try [kind](https://kind.sigs.k8s.io/) for local development or [k3d](https://k3d.io/) for lightweight clusters.
+</Tip>
+
+## Quick Start: All-in-One Example
+
+Deploy a complete Gate proxy with two Minecraft servers in one command:
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/minekube/gate/master/.examples/kubernetes/bundle.yaml
+```
+
+This creates:
+- Gate proxy deployment
+- Two Minecraft server pods (StatefulSet)
+- NodePort service on port 32556
+- ConfigMaps for configuration
+
+<Steps>
+
+<Step title="Deploy the bundle">
+  ```bash
+  kubectl apply -f https://raw.githubusercontent.com/minekube/gate/master/.examples/kubernetes/bundle.yaml
+  ```
+</Step>
+
+<Step title="Wait for pods to be ready">
+  ```bash
+  kubectl get pods -w
+  ```
+  
+  Wait until all pods show `Running` status.
+</Step>
+
+<Step title="Connect to Gate">
+  Connect your Minecraft client to `<node-ip>:32556`
+  
+  Find your node IP:
+  ```bash
+  kubectl get nodes -o wide
+  ```
+</Step>
+
+<Step title="Test server switching">
+  In-game, use `/server server-0` or `/server server-1` to switch between servers.
+  
+  Try deleting a server pod to see Gate automatically reconnect players:
+  ```bash
+  kubectl delete pod server-0
+  ```
+</Step>
+
+</Steps>
+
+<Accordion title="View complete bundle.yaml manifest">
+  The bundle includes everything needed for a complete Minecraft network:
+  
+  ```yaml
+  apiVersion: v1
+  data:
+    config.yml: |
+      config:
+        bind: 0.0.0.0:25565
+        servers:
+          server-0: server-0.servers:25565
+          server-1: server-1.servers:25565
+        try:
+          - server-0
+          - server-1
+  kind: ConfigMap
+  metadata:
+    name: gate-config
+  ---
+  apiVersion: v1
+  kind: Service
+  metadata:
+    name: gate
+  spec:
+    type: NodePort
+    ports:
+    - port: 25565
+      targetPort: minecraft
+      protocol: TCP
+      nodePort: 32556
+    selector:
+      app.kubernetes.io/component: proxy
+  ---
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: gate
+  spec:
+    selector:
+      matchLabels:
+        app.kubernetes.io/component: proxy
+    template:
+      metadata:
+        labels:
+          app.kubernetes.io/component: proxy
+      spec:
+        containers:
+        - name: gate
+          image: ghcr.io/minekube/gate:latest
+          ports:
+          - containerPort: 25565
+            name: minecraft
+          volumeMounts:
+          - name: config
+            mountPath: /config.yml
+            subPath: config.yml
+        volumes:
+        - name: config
+          configMap:
+            name: gate-config
+  ---
+  apiVersion: apps/v1
+  kind: StatefulSet
+  metadata:
+    name: server
+  spec:
+    replicas: 2
+    serviceName: servers
+    selector:
+      matchLabels:
+        app.kubernetes.io/component: server
+    template:
+      metadata:
+        labels:
+          app.kubernetes.io/component: server
+      spec:
+        containers:
+        - name: minecraft-server
+          image: itzg/minecraft-server:latest
+          env:
+          - name: EULA
+            value: "TRUE"
+          - name: TYPE
+            value: "PUFFERFISH"
+          - name: ONLINE_MODE
+            value: "FALSE"
+          ports:
+          - containerPort: 25565
+            name: minecraft
+  ```
+</Accordion>
+
+## Using Kustomize (Recommended)
+
+[Kustomize](https://kustomize.io/) provides a structured way to manage Kubernetes manifests. Gate's examples use Kustomize for easier customization.
+
+<Steps>
+
+<Step title="Clone the repository">
+  ```bash
+  git clone https://github.com/minekube/gate.git
+  cd gate/.examples/kubernetes
+  ```
+</Step>
+
+<Step title="Review the structure">
+  The example includes:
+  
+  - `kustomization.yaml` - Main Kustomize configuration
+  - `deploy.yaml` - Gate deployment
+  - `svc.yaml` - Gate service
+  - `config.yml` - Gate configuration
+  - `servers/` - Minecraft server manifests
+</Step>
+
+<Step title="Customize for your needs">
+  Edit the files to match your environment:
+  
+  ```yaml config.yml
+  config:
+    bind: 0.0.0.0:25565
+    servers:
+      lobby: lobby.minecraft.svc:25565
+      survival: survival.minecraft.svc:25565
+    try:
+      - lobby
+  ```
+</Step>
+
+<Step title="Preview the generated manifests">
+  ```bash
+  kustomize build .
+  ```
+  
+  This shows what will be deployed without actually deploying.
+</Step>
+
+<Step title="Deploy to Kubernetes">
+  ```bash
+  kubectl apply -k .
+  ```
+</Step>
+
+<Step title="Clean up when done">
+  ```bash
+  kubectl delete -k .
+  ```
+</Step>
+
+</Steps>
+
+### Overlay Your Own Kustomize
+
+Create your own Kustomize that extends Gate's example:
+
+```yaml kustomization.yaml
+resources:
+  - https://raw.githubusercontent.com/minekube/gate/master/.examples/kubernetes
+
+patchesStrategicMerge:
+  - patch.yaml
+
+namespace: minecraft
+
+images:
+  - name: ghcr.io/minekube/gate
+    newTag: 0.42.2  # Pin to specific version
+```
+
+Create a patch file:
+
+```yaml patch.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gate
+spec:
+  replicas: 3  # Scale Gate to 3 replicas
+  template:
+    spec:
+      containers:
+      - name: gate
+        resources:
+          limits:
+            memory: 512Mi
+            cpu: 500m
+          requests:
+            memory: 256Mi
+            cpu: 250m
+```
+
+## Manual Deployment
+
+For more control, deploy Gate components individually:
+
+<Steps>
+
+<Step title="Create ConfigMap for Gate configuration">
+  ```bash
+  kubectl create configmap gate-config --from-file=config.yml
+  ```
+</Step>
+
+<Step title="Create Gate Deployment">
+  ```yaml gate-deployment.yaml
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: gate
+    labels:
+      app: gate
+  spec:
+    replicas: 2
+    selector:
+      matchLabels:
+        app: gate
+    template:
+      metadata:
+        labels:
+          app: gate
+      spec:
+        containers:
+        - name: gate
+          image: ghcr.io/minekube/gate:latest
+          ports:
+          - containerPort: 25565
+            name: minecraft
+            protocol: TCP
+          volumeMounts:
+          - name: config
+            mountPath: /config.yml
+            subPath: config.yml
+          resources:
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+        volumes:
+        - name: config
+          configMap:
+            name: gate-config
+  ```
+  
+  Apply it:
+  ```bash
+  kubectl apply -f gate-deployment.yaml
+  ```
+</Step>
+
+<Step title="Create Gate Service">
+  ```yaml gate-service.yaml
+  apiVersion: v1
+  kind: Service
+  metadata:
+    name: gate
+  spec:
+    type: LoadBalancer  # Use LoadBalancer for cloud, NodePort for local
+    selector:
+      app: gate
+    ports:
+    - port: 25565
+      targetPort: 25565
+      protocol: TCP
+      name: minecraft
+  ```
+  
+  Apply it:
+  ```bash
+  kubectl apply -f gate-service.yaml
+  ```
+</Step>
+
+<Step title="Get the external IP">
+  ```bash
+  kubectl get service gate
+  ```
+  
+  For LoadBalancer, wait for EXTERNAL-IP to be assigned.
+  For NodePort, use any node IP with the assigned node port.
+</Step>
+
+</Steps>
+
+## Service Types
+
+Choose the appropriate service type for your environment:
+
+<Tabs>
+  <Tab title="LoadBalancer">
+    **Best for**: Cloud providers (GKE, EKS, AKS)
+    
+    ```yaml
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: gate
+    spec:
+      type: LoadBalancer
+      ports:
+      - port: 25565
+        targetPort: 25565
+      selector:
+        app: gate
+    ```
+    
+    Automatically provisions a cloud load balancer with external IP.
+  </Tab>
+  
+  <Tab title="NodePort">
+    **Best for**: Local clusters, bare metal
+    
+    ```yaml
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: gate
+    spec:
+      type: NodePort
+      ports:
+      - port: 25565
+        targetPort: 25565
+        nodePort: 32556  # Optional: specify port (30000-32767)
+      selector:
+        app: gate
+    ```
+    
+    Exposes Gate on each node's IP at the specified port.
+  </Tab>
+  
+  <Tab title="Ingress">
+    **Best for**: TCP proxying with ingress controller
+    
+    Requires ingress controller with TCP support (nginx-ingress, traefik).
+    
+    ```yaml
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: gate
+    spec:
+      type: ClusterIP
+      ports:
+      - port: 25565
+      selector:
+        app: gate
+    ---
+    # Configure TCP proxy in ingress controller
+    # Example for nginx-ingress:
+    # Add to tcp-services ConfigMap:
+    # 25565: "default/gate:25565"
+    ```
+  </Tab>
+</Tabs>
+
+## Bedrock Edition Support
+
+For Bedrock Edition support, use the JRE variant image:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gate
+spec:
+  template:
+    spec:
+      containers:
+      - name: gate
+        image: ghcr.io/minekube/gate/jre:latest  # JRE variant
+        ports:
+        - containerPort: 25565
+          name: minecraft-java
+          protocol: TCP
+        - containerPort: 19132
+          name: minecraft-bedrock
+          protocol: UDP
+```
+
+Update the service to expose UDP port:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: gate
+spec:
+  ports:
+  - port: 25565
+    protocol: TCP
+    name: java
+  - port: 19132
+    protocol: UDP
+    name: bedrock
+```
+
+## Monitoring and Troubleshooting
+
+<AccordionGroup>
+
+<Accordion title="Check pod status">
+  ```bash
+  kubectl get pods -l app=gate
+  kubectl describe pod <pod-name>
+  ```
+</Accordion>
+
+<Accordion title="View logs">
+  ```bash
+  kubectl logs -f deployment/gate
+  
+  # For specific pod:
+  kubectl logs -f <pod-name>
+  
+  # Previous container logs (if crashed):
+  kubectl logs <pod-name> --previous
+  ```
+</Accordion>
+
+<Accordion title="Check service endpoints">
+  ```bash
+  kubectl get endpoints gate
+  ```
+  
+  Verify that endpoints are listed (pods are ready).
+</Accordion>
+
+<Accordion title="Test connectivity inside cluster">
+  ```bash
+  kubectl run -it --rm debug --image=busybox --restart=Never -- sh
+  # Inside the pod:
+  nc -zv gate 25565
+  ```
+</Accordion>
+
+<Accordion title="ConfigMap not updating">
+  After updating a ConfigMap, restart the deployment:
+  
+  ```bash
+  kubectl rollout restart deployment/gate
+  ```
+  
+  Or use ConfigMap versioning in Kustomize with `configMapGenerator`.
+</Accordion>
+
+</AccordionGroup>
+
+## Production Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use resource limits" icon="gauge-high">
+    Set memory and CPU limits to prevent resource exhaustion:
+    
+    ```yaml
+    resources:
+      limits:
+        memory: 512Mi
+        cpu: 500m
+      requests:
+        memory: 256Mi
+        cpu: 250m
+    ```
+  </Card>
+  
+  <Card title="Enable readiness probes" icon="heartbeat">
+    Ensure traffic only goes to ready pods:
+    
+    ```yaml
+    readinessProbe:
+      tcpSocket:
+        port: 25565
+      initialDelaySeconds: 5
+      periodSeconds: 10
+    ```
+  </Card>
+  
+  <Card title="Use multiple replicas" icon="clone">
+    Run multiple Gate instances for high availability:
+    
+    ```yaml
+    spec:
+      replicas: 3
+    ```
+  </Card>
+  
+  <Card title="Pin image versions" icon="tag">
+    Avoid unexpected changes with specific versions:
+    
+    ```yaml
+    image: ghcr.io/minekube/gate:0.42.2
+    ```
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Customize Gate for your network
+  </Card>
+  <Card title="Scaling" icon="arrows-up-down" href="/advanced/scaling">
+    Scale Gate for high player counts
+  </Card>
+</CardGroup>

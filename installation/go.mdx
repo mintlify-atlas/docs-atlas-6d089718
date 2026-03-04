@@ -1,0 +1,383 @@
+---
+title: Go Installation
+description: Install Gate using Go tools, build from source, or run directly with go run
+---
+
+If you have Go installed, you can install and run Gate directly using Go's toolchain. This is ideal for developers or those who want to build from source.
+
+## Prerequisites
+
+Ensure you have the following installed:
+
+<CardGroup cols={2}>
+  <Card title="Go" icon="golang">
+    Version 1.24.1 or later
+    
+    Download from [go.dev/doc/install](https://go.dev/doc/install)
+  </Card>
+  <Card title="Git" icon="git-alt">
+    For cloning the repository (optional)
+    
+    Install from [git-scm.com](https://git-scm.com/downloads)
+  </Card>
+</CardGroup>
+
+Verify your installation:
+
+```bash
+go version
+# Expected: go version go1.24.1 or later
+```
+
+## Quick Install
+
+Install Gate globally using `go install`:
+
+```bash
+go install go.minekube.com/gate@latest
+```
+
+This will:
+- Download the Gate source code
+- Compile the binary
+- Install it to `$GOPATH/bin/gate` (typically `~/go/bin/gate`)
+
+<Tip>
+  Make sure `$GOPATH/bin` is in your PATH:
+  
+  ```bash
+  echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.bashrc
+  source ~/.bashrc
+  ```
+</Tip>
+
+Run Gate:
+
+```bash
+gate
+```
+
+## Run Without Installation
+
+You can run Gate directly without installing using `go run`:
+
+```bash
+go run go.minekube.com/gate@latest
+```
+
+This is perfect for:
+- Testing Gate without installing
+- Running different versions side-by-side
+- CI/CD pipelines
+- Development environments
+
+<Info>
+  Go downloads and caches modules locally, so subsequent runs are much faster.
+</Info>
+
+## Install Specific Version
+
+Install a specific version or commit:
+
+<CodeGroup>
+
+```bash Specific Version
+go install go.minekube.com/gate@v0.42.2
+```
+
+```bash Latest Commit
+go install go.minekube.com/gate@main
+```
+
+```bash Specific Commit
+go install go.minekube.com/gate@6d3671c
+```
+
+</CodeGroup>
+
+## Build from Source
+
+For development or custom builds:
+
+<Steps>
+
+<Step title="Clone the repository">
+  ```bash
+  git clone https://github.com/minekube/gate.git
+  cd gate
+  ```
+</Step>
+
+<Step title="Install dependencies">
+  ```bash
+  go mod download
+  ```
+  
+  This downloads all required dependencies specified in `go.mod`.
+</Step>
+
+<Step title="Build the binary">
+  ```bash
+  go build -o gate gate.go
+  ```
+  
+  For a production build with optimizations:
+  
+  ```bash
+  CGO_ENABLED=0 go build \
+    -ldflags="-s -w -X 'go.minekube.com/gate/pkg/version.Version=custom'" \
+    -o gate gate.go
+  ```
+  
+  **Flags explained:**
+  - `CGO_ENABLED=0` - Static binary without C dependencies
+  - `-s -w` - Strip debug info (smaller binary)
+  - `-X` - Set version information
+</Step>
+
+<Step title="Run the binary">
+  ```bash
+  ./gate
+  ```
+</Step>
+
+<Step title="(Optional) Install to PATH">
+  ```bash
+  sudo mv gate /usr/local/bin/
+  # or for user install:
+  mkdir -p ~/.local/bin
+  mv gate ~/.local/bin/
+  ```
+</Step>
+
+</Steps>
+
+## Cross-Compilation
+
+Build Gate for different platforms:
+
+<CodeGroup>
+
+```bash Linux AMD64
+GOOS=linux GOARCH=amd64 go build -o gate-linux-amd64 gate.go
+```
+
+```bash Windows AMD64
+GOOS=windows GOARCH=amd64 go build -o gate-windows-amd64.exe gate.go
+```
+
+```bash macOS ARM64 (Apple Silicon)
+GOOS=darwin GOARCH=arm64 go build -o gate-darwin-arm64 gate.go
+```
+
+```bash Linux ARM64 (Raspberry Pi)
+GOOS=linux GOARCH=arm64 go build -o gate-linux-arm64 gate.go
+```
+
+</CodeGroup>
+
+## Development Workflow
+
+For active development:
+
+<Steps>
+
+<Step title="Clone and enter directory">
+  ```bash
+  git clone https://github.com/minekube/gate.git
+  cd gate
+  ```
+</Step>
+
+<Step title="Run in development mode">
+  ```bash
+  go run gate.go
+  ```
+  
+  This rebuilds automatically when you run the command.
+</Step>
+
+<Step title="Run tests">
+  ```bash
+  go test ./...
+  ```
+</Step>
+
+<Step title="Format code">
+  ```bash
+  go fmt ./...
+  ```
+</Step>
+
+<Step title="Check for issues">
+  ```bash
+  go vet ./...
+  ```
+</Step>
+
+</Steps>
+
+<Tip>
+  See the [Developers Guide](/developers/) for comprehensive development documentation.
+</Tip>
+
+## Module Information
+
+Gate's Go module details:
+
+```go
+module go.minekube.com/gate
+
+go 1.24.1
+```
+
+View all dependencies:
+
+```bash
+go list -m all
+```
+
+Update dependencies:
+
+```bash
+go get -u ./...
+go mod tidy
+```
+
+## Using Gate as a Library
+
+You can also import Gate as a library in your own Go projects:
+
+```go
+package main
+
+import (
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+)
+
+func main() {
+    // Create and configure Gate proxy programmatically
+    // See API documentation for details
+}
+```
+
+Add to your project:
+
+```bash
+go get go.minekube.com/gate@latest
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+
+<Accordion title="go: command not found">
+  Go is not installed or not in your PATH.
+  
+  1. Install Go from [go.dev/doc/install](https://go.dev/doc/install)
+  2. Add Go to your PATH:
+     
+     ```bash
+     export PATH=$PATH:/usr/local/go/bin
+     ```
+</Accordion>
+
+<Accordion title="gate: command not found after install">
+  `$GOPATH/bin` is not in your PATH.
+  
+  Add it to your shell profile:
+  
+  ```bash
+  echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.bashrc
+  source ~/.bashrc
+  ```
+</Accordion>
+
+<Accordion title="Build fails with 'go version too old'">
+  Gate requires Go 1.24.1 or later.
+  
+  Update Go:
+  
+  ```bash
+  # Download latest from go.dev
+  go version
+  ```
+</Accordion>
+
+<Accordion title="Module download errors">
+  Check your internet connection and proxy settings:
+  
+  ```bash
+  go env GOPROXY
+  # Should show: https://proxy.golang.org,direct
+  ```
+  
+  Clear module cache and retry:
+  
+  ```bash
+  go clean -modcache
+  go mod download
+  ```
+</Accordion>
+
+<Accordion title="Build errors with dependencies">
+  Update and tidy dependencies:
+  
+  ```bash
+  go get -u ./...
+  go mod tidy
+  go mod verify
+  ```
+</Accordion>
+
+</AccordionGroup>
+
+## Performance Optimization
+
+For production builds, use these optimizations:
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+  -a \
+  -ldflags='-s -w -extldflags "-static"' \
+  -tags netgo \
+  -o gate \
+  gate.go
+```
+
+**Benefits:**
+- Fully static binary (no external dependencies)
+- Smaller binary size (stripped symbols)
+- Better portability
+- Suitable for containers (distroless, scratch)
+
+## Verify Installation
+
+Check that Gate is installed correctly:
+
+```bash
+gate --version
+```
+
+Expected output:
+
+```
+Gate 0.42.2
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/getting-started/quickstart">
+    Get your proxy running
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Customize Gate settings
+  </Card>
+  <Card title="Developers Guide" icon="code" href="/developers/">
+    Contribute to Gate or build plugins
+  </Card>
+  <Card title="Binary Installation" icon="download" href="/installation/binary">
+    Install pre-built binaries instead
+  </Card>
+</CardGroup>

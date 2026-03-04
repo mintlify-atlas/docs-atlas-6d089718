@@ -1,0 +1,488 @@
+---
+title: "Key Authentication - Minecraft 1.19+ Security"
+description: "Configure Gate's forceKeyAuthentication setting to enable or disable Minecraft 1.19+ chat signing and message verification."
+---
+
+# Key Authentication (1.19+)
+
+Minecraft 1.19 introduced a new security feature: cryptographic key-based authentication for player messages and chat. Gate provides configuration to control this behavior through the `forceKeyAuthentication` setting.
+
+## What is Key Authentication?
+
+Starting in Minecraft 1.19, Mojang introduced a system where:
+
+- Each player has a cryptographic **public/private key pair**
+- Chat messages are **cryptographically signed** by the player's private key
+- Servers can **verify message authenticity** using the player's public key
+- This prevents message tampering and impersonation
+
+<Note>
+This feature is part of Mojang's "Secure Chat" system designed to enable server-side moderation and ensure message authenticity.
+</Note>
+
+## Configuration
+
+The key authentication setting is configured in your `config.yml`:
+
+```yaml
+config:
+  # Should the proxy enforce the new public key
+  # security standard added in Minecraft 1.19?
+  # Default: true
+  forceKeyAuthentication: true
+```
+
+## Enabled (Recommended)
+
+<Note>
+**Gate defaults to `forceKeyAuthentication: true` for security and compatibility.**
+</Note>
+
+```yaml
+config:
+  forceKeyAuthentication: true
+```
+
+### Behavior
+
+When enabled:
+
+- ✅ Players **must** provide a valid cryptographic key during authentication
+- ✅ Chat messages can be cryptographically verified
+- ✅ Compatible with Mojang's secure chat features
+- ✅ Supports chat reporting and moderation features
+- ✅ Follows Minecraft's security standards
+- ⚠️ Some modded clients may have issues
+
+### Benefits
+
+1. **Message Authenticity**: Verify messages haven't been tampered with
+2. **Player Verification**: Ensure messages are from the claimed player
+3. **Moderation Support**: Enable Mojang's server-side moderation features
+4. **Future Compatibility**: Prepared for future Minecraft security features
+
+## Disabled
+
+<Warning>
+Disabling key authentication reduces security and disables some Minecraft 1.19+ features.
+</Warning>
+
+```yaml
+config:
+  forceKeyAuthentication: false
+```
+
+### Behavior
+
+When disabled:
+
+- ⚠️ Players can connect without providing cryptographic keys
+- ⚠️ Chat messages cannot be cryptographically verified
+- ⚠️ Secure chat features are disabled
+- ⚠️ Chat reporting may not function correctly
+- ✅ Compatible with modded clients that don't support key authentication
+- ✅ No key verification overhead
+
+### When to Disable
+
+Disable key authentication only when:
+
+1. **Modded Clients**: Your community uses heavily modded clients that don't support key authentication
+2. **Custom Clients**: Using custom authentication systems
+3. **Privacy Concerns**: Avoiding Mojang's chat reporting system
+4. **Legacy Support**: Supporting older client modifications
+
+<Note>
+Most legitimate Minecraft clients (vanilla, Forge, Fabric) fully support key authentication. Only disable if you have specific compatibility requirements.
+</Note>
+
+## Technical Details
+
+### Authentication Flow (Enabled)
+
+1. **Player Login**: Player connects to Gate
+2. **Key Request**: Gate requests player's public key
+3. **Key Provision**: Client sends public key signed by Mojang
+4. **Key Verification**: Gate verifies key signature with Mojang's API
+5. **Session Establishment**: Player authenticated with verified key
+6. **Message Signing**: All chat messages are cryptographically signed
+
+### Authentication Flow (Disabled)
+
+1. **Player Login**: Player connects to Gate
+2. **Skip Key Request**: Gate does not request public key
+3. **Session Establishment**: Player authenticated without key verification
+4. **Unsigned Messages**: Chat messages are not cryptographically signed
+
+## Security Implications
+
+### With Key Authentication (Enabled)
+
+**Strengths:**
+- 🔒 Messages are cryptographically signed
+- 🔒 Impersonation is cryptographically prevented
+- 🔒 Message tampering is detectable
+- 🔒 Supports Mojang's moderation infrastructure
+
+**Limitations:**
+- ⚠️ Depends on Mojang's key infrastructure
+- ⚠️ May break some modded clients
+- ⚠️ Enables Mojang's chat reporting system
+
+### Without Key Authentication (Disabled)
+
+**Risks:**
+- ⚠️ Messages can be forged by proxy/plugins
+- ⚠️ No cryptographic verification of message origin
+- ⚠️ Chat impersonation possible
+- ⚠️ Incompatible with secure chat features
+
+**Benefits:**
+- ✅ Compatible with all clients
+- ✅ No dependency on Mojang's key servers
+- ✅ Greater privacy (no chat reporting)
+
+## Chat Signing and Validation
+
+### How It Works
+
+When `forceKeyAuthentication: true`:
+
+```
+Player Types Message
+      ↓
+[Client Signs with Private Key]
+      ↓
+[Signed Message → Gate Proxy]
+      ↓
+[Gate Verifies with Public Key]
+      ↓
+[Signed Message → Backend Server]
+      ↓
+[Server Verifies with Public Key]
+      ↓
+Message Displayed to Players
+```
+
+### Signature Structure
+
+Each message includes:
+- **Message Content**: The actual chat text
+- **Timestamp**: When the message was sent
+- **Salt**: Random value to prevent replay attacks
+- **Signature**: Cryptographic signature over the above
+
+<Note>
+The signature ensures the message hasn't been modified since the player sent it.
+</Note>
+
+## Compatibility
+
+### Client Compatibility
+
+| Client Type | Supports Key Auth | Notes |
+|-------------|-------------------|-------|
+| Vanilla 1.19+ | ✅ Yes | Full support |
+| Vanilla before 1.19 | ✅ Yes | No signing, but connects |
+| Forge 1.19+ | ✅ Yes | Full support |
+| Fabric 1.19+ | ✅ Yes | Full support |
+| Modded (heavily) | ⚠️ Maybe | Depends on modifications |
+| Custom clients | ⚠️ Maybe | Depends on implementation |
+
+<Warning>
+Some modified clients (especially those designed to bypass Mojang's systems) may not support key authentication.
+</Warning>
+
+### Server Compatibility
+
+**Backend servers** must support key authentication:
+
+- **Paper 1.19+**: Full support ✅
+- **Spigot 1.19+**: Full support ✅
+- **Vanilla 1.19+**: Full support ✅
+- **Fabric 1.19+**: Full support with mods ✅
+- **Modded servers**: Depends on mods ⚠️
+
+## Chat Reporting
+
+Key authentication enables Mojang's controversial **Player Chat Reporting** feature:
+
+### What is Chat Reporting?
+
+- Players can report messages to Mojang
+- Mojang's moderation team reviews reports
+- Violators can receive global bans
+- Cryptographic signatures prove message authenticity
+
+<Note>
+This is a controversial feature in the Minecraft community, as it allows Mojang to enforce moderation on private servers.
+</Note>
+
+### Disabling Chat Reporting
+
+If you want to disable Mojang's chat reporting:
+
+**Option 1: Disable key authentication (not recommended)**
+```yaml
+config:
+  forceKeyAuthentication: false
+```
+
+**Option 2: Use backend server plugins (recommended)**
+
+Install plugins on backend servers:
+- **[No Chat Reports](https://modrinth.com/mod/no-chat-reports)** - Fabric/Forge mod
+- **[FreedomChat](https://www.spigotmc.org/resources/freedomchat.103392/)** - Spigot plugin
+
+<Note>
+Using backend plugins allows you to keep `forceKeyAuthentication: true` for security while disabling chat reporting features.
+</Note>
+
+## Configuration Examples
+
+### Production Server (Recommended)
+
+```yaml
+config:
+  # Enable key authentication for security
+  forceKeyAuthentication: true
+  
+  # Use online mode for Mojang authentication
+  onlineMode: true
+  
+  # Use secure forwarding
+  forwarding:
+    mode: velocity
+    velocitySecret: "your-secret-here"
+```
+
+### Privacy-Focused Server
+
+```yaml
+config:
+  # Keep key authentication for security
+  forceKeyAuthentication: true
+  
+  # Use online mode
+  onlineMode: true
+  
+  # Install No Chat Reports plugin on backend servers
+  # to disable chat reporting while keeping key auth
+```
+
+### Modded/Custom Client Server
+
+```yaml
+config:
+  # Disable key authentication for compatibility
+  forceKeyAuthentication: false
+  
+  # Consider security implications
+  onlineMode: true  # Keep authentication
+  
+  forwarding:
+    mode: velocity  # Use secure forwarding
+    velocitySecret: "your-secret-here"
+```
+
+## Backend Server Configuration
+
+### Paper Servers
+
+Paper respects Gate's key authentication settings. No additional configuration needed.
+
+**Optional: Enforce chat signatures**
+
+Edit `config/paper-global.yml`:
+
+```yaml
+chat:
+  # Enforce message signatures
+  enforce-secure-profile: true
+```
+
+<Warning>
+Setting `enforce-secure-profile: true` will kick players without valid keys, even if Gate allows them.
+</Warning>
+
+### Spigot Servers
+
+Spigot automatically handles key authentication based on Gate's configuration.
+
+### Vanilla Servers
+
+Vanilla servers support key authentication by default:
+
+**server.properties:**
+```properties
+# Must be false when behind Gate
+online-mode=false
+
+# Optional: Enforce secure profiles
+enforce-secure-profile=false
+```
+
+<Note>
+Set `enforce-secure-profile=false` to allow Gate to control key authentication.
+</Note>
+
+## Troubleshooting
+
+### Players Can't Connect (1.19+)
+
+**Symptoms**: "Invalid signature for profile public key" or similar errors
+
+**Causes**:
+- Key authentication mismatch between Gate and backend
+- Backend server enforcing secure profiles
+- Client not providing valid keys
+
+**Solutions**:
+
+1. **Verify Gate configuration:**
+   ```yaml
+   config:
+     forceKeyAuthentication: true
+   ```
+
+2. **Check backend server settings:**
+   ```properties
+   # server.properties
+   enforce-secure-profile=false
+   ```
+
+3. **Test with vanilla client** to rule out modded client issues
+
+### Modded Clients Can't Connect
+
+**Symptoms**: Connection refused, authentication errors
+
+**Cause**: Modded client doesn't support key authentication
+
+**Solution**: Disable key authentication
+
+```yaml
+config:
+  forceKeyAuthentication: false
+```
+
+<Warning>
+This reduces security. Ensure you trust your player base.
+</Warning>
+
+### Chat Messages Not Signed
+
+**Symptoms**: Backend plugins report unsigned messages
+
+**Causes**:
+- `forceKeyAuthentication: false` in Gate
+- Player using client < 1.19
+- Backend stripping signatures
+
+**Solutions**:
+
+1. **Enable key authentication:**
+   ```yaml
+   config:
+     forceKeyAuthentication: true
+   ```
+
+2. **Check backend configuration** isn't stripping signatures
+
+3. **Verify client version** is 1.19+
+
+### Chat Reporting Not Working
+
+**Symptoms**: Players can't report messages
+
+**Causes**:
+- Key authentication disabled
+- Backend plugin blocking chat reports
+- Invalid key signatures
+
+**Solutions**:
+
+1. **Enable key authentication:**
+   ```yaml
+   config:
+     forceKeyAuthentication: true
+   ```
+
+2. **Remove chat reporting blocking plugins** (No Chat Reports, etc.)
+
+3. **Verify player keys are valid**
+
+## Best Practices
+
+### For Public Servers
+
+<Note>
+**Recommended: Enable key authentication**
+</Note>
+
+```yaml
+config:
+  forceKeyAuthentication: true
+  onlineMode: true
+```
+
+**Benefits:**
+- Maximum security
+- Full Minecraft feature support
+- Message authenticity verification
+
+### For Modded Servers
+
+<Note>
+**Consider disabling if modded clients have issues**
+</Note>
+
+```yaml
+config:
+  forceKeyAuthentication: false
+  onlineMode: true  # Keep Mojang auth
+```
+
+**Trade-offs:**
+- Better mod compatibility
+- Reduced security
+- Manual moderation required
+
+### For Private Servers
+
+<Note>
+**Balance security and privacy needs**
+</Note>
+
+**Option A: Enable with chat report blocking**
+```yaml
+config:
+  forceKeyAuthentication: true
+# Install No Chat Reports plugin on backends
+```
+
+**Option B: Disable for privacy**
+```yaml
+config:
+  forceKeyAuthentication: false
+# Rely on server-side moderation tools
+```
+
+## Version History
+
+| Minecraft Version | Key Authentication Support |
+|-------------------|---------------------------|
+| 1.19.0 | ✅ Introduced |
+| 1.19.1+ | ✅ Required by default |
+| 1.20.0+ | ✅ Enhanced security |
+| Before 1.19 | ❌ Not supported |
+
+<Note>
+Players on Minecraft versions before 1.19 can still connect; they simply won't have their messages signed.
+</Note>
+
+## Related Topics
+
+- [Online Mode](/security/online-mode) - Mojang authentication
+- [Forwarding Modes](/security/forwarding-modes) - Secure player info forwarding
+- [Security Best Practices](/guide/security/) - Comprehensive security guide

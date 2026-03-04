@@ -1,0 +1,624 @@
+---
+title: "Proxy Protocol - HAProxy Protocol Support"
+description: "Configure Gate to support HAProxy PROXY protocol for preserving client IP addresses when behind load balancers and reverse proxies."
+---
+
+# Proxy Protocol
+
+Gate supports the **HAProxy PROXY protocol**, which preserves the original client IP address when Gate is deployed behind load balancers, reverse proxies, or DDoS protection services.
+
+## What is PROXY Protocol?
+
+The PROXY protocol is a network protocol designed to pass connection information (primarily the client's IP address) through proxies and load balancers:
+
+- Developed by **HAProxy**
+- Industry-standard for preserving client information
+- Supports both TCP (v1) and binary (v2) formats
+- Works with load balancers, reverse proxies, and DDoS mitigation services
+
+<Note>
+Without PROXY protocol, Gate would only see the load balancer's IP address, not the actual player's IP.
+</Note>
+
+## Why Use PROXY Protocol?
+
+### Problem: IP Address Masking
+
+When Gate sits behind a load balancer:
+
+```
+Player (IP: 203.0.113.50)
+      ↓
+Load Balancer (IP: 10.0.0.1)
+      ↓
+Gate Proxy
+      ↓
+Backend Servers
+```
+
+**Without PROXY protocol:**
+- Gate sees all connections from `10.0.0.1` (load balancer IP)
+- Rate limiting breaks (all players share same IP)
+- IP bans don't work properly
+- Geolocation services fail
+- Logs show wrong IP addresses
+
+**With PROXY protocol:**
+- Gate receives the real player IP `203.0.113.50`
+- Rate limiting works correctly per player
+- IP bans function properly
+- Accurate geolocation and logging
+
+## Configuration
+
+### Client-Side: Receiving PROXY Protocol
+
+Configure Gate to **receive** PROXY protocol headers from upstream load balancers:
+
+```yaml
+config:
+  # Proxy protocol (HA-Proxy) determines whether Gate should support
+  # proxy protocol for players.
+  # Do not enable this if you don't know what it is.
+  proxyProtocol: false
+```
+
+**Enable when Gate is behind a load balancer:**
+
+```yaml
+config:
+  proxyProtocol: true
+```
+
+<Warning>
+**Only enable `proxyProtocol: true` if your load balancer sends PROXY protocol headers.** Enabling this without a PROXY protocol source will cause all connections to fail.
+</Warning>
+
+### Backend-Side: Sending PROXY Protocol
+
+Gate can also **send** PROXY protocol headers to backend servers:
+
+```yaml
+config:
+  # Enable HA-Proxy protocol mode for backend servers
+  proxyProtocolBackend: false
+```
+
+**Enable when backend servers expect PROXY protocol:**
+
+```yaml
+config:
+  proxyProtocolBackend: true
+```
+
+<Note>
+This is useful when backend servers are behind their own load balancers or need the original client IP.
+</Note>
+
+## Common Deployment Scenarios
+
+### Scenario 1: Gate Behind Load Balancer
+
+**Architecture:**
+```
+Players → Load Balancer → Gate → Backend Servers
+```
+
+**Configuration:**
+
+**Load Balancer:**
+- Enable PROXY protocol output
+
+**Gate** (`config.yml`):
+```yaml
+config:
+  # Receive PROXY protocol from load balancer
+  proxyProtocol: true
+  
+  # Send player info to backends via forwarding
+  forwarding:
+    mode: velocity
+    velocitySecret: "your-secret"
+```
+
+**Backend Servers:**
+- Configure Velocity forwarding (no PROXY protocol needed)
+
+### Scenario 2: DDoS Protection Service
+
+**Architecture:**
+```
+Players → TCPShield/OVH/Cloudflare → Gate → Backends
+```
+
+**Configuration:**
+
+**DDoS Protection Service:**
+- Enable PROXY protocol in service settings
+
+**Gate** (`config.yml`):
+```yaml
+config:
+  # Receive PROXY protocol from DDoS protection
+  proxyProtocol: true
+  
+  forwarding:
+    mode: velocity
+    velocitySecret: "your-secret"
+```
+
+<Note>
+Many DDoS protection services (TCPShield, Cloudflare Spectrum, etc.) use PROXY protocol to preserve client IPs.
+</Note>
+
+### Scenario 3: Multi-Layer Proxy
+
+**Architecture:**
+```
+Players → Load Balancer → Gate → Backend Proxy → Game Servers
+```
+
+**Configuration:**
+
+**Gate** (`config.yml`):
+```yaml
+config:
+  # Receive from load balancer
+  proxyProtocol: true
+  
+  # Send to backend proxy
+  proxyProtocolBackend: true
+```
+
+**Backend Proxy:**
+- Enable PROXY protocol receive
+- Forward to game servers using appropriate method
+
+### Scenario 4: Kubernetes/Docker
+
+**Architecture:**
+```
+Players → Ingress/LoadBalancer → Gate Pod → Backend Pods
+```
+
+**Configuration:**
+
+**Ingress/Service:**
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: gate-proxy
+  annotations:
+    # Enable PROXY protocol (varies by cloud provider)
+    service.beta.kubernetes.io/aws-load-balancer-proxy-protocol: "*"
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 25565
+    targetPort: 25565
+```
+
+**Gate** (`config.yml`):
+```yaml
+config:
+  proxyProtocol: true
+```
+
+## Gate Lite Mode
+
+Gate Lite supports per-route PROXY protocol configuration:
+
+```yaml
+config:
+  lite:
+    enabled: true
+    routes:
+      # This route receives PROXY protocol and forwards it
+      - host: 'play.example.com'
+        backend: 'mc1.internal:25565'
+        proxyProtocol: true  # Send PROXY protocol to backend
+      
+      # This route doesn't use PROXY protocol
+      - host: 'localhost'
+        backend: 'mc2.internal:25565'
+        proxyProtocol: false
+```
+
+**Use case: Mixed backend requirements**
+
+```yaml
+config:
+  # Gate receives PROXY protocol from load balancer
+  proxyProtocol: true
+  
+  lite:
+    enabled: true
+    routes:
+      # Backend supports PROXY protocol
+      - host: 'lobby.example.com'
+        backend: 'lobby-server:25565'
+        proxyProtocol: true
+      
+      # Backend doesn't support PROXY protocol
+      - host: 'survival.example.com'
+        backend: 'survival-server:25565'
+        proxyProtocol: false
+```
+
+<Note>
+This allows you to have some backends that support PROXY protocol and others that don't.
+</Note>
+
+## Load Balancer Configuration
+
+### HAProxy
+
+**HAProxy configuration:**
+
+```haproxy
+frontend minecraft
+    bind *:25565
+    mode tcp
+    default_backend gate_servers
+
+backend gate_servers
+    mode tcp
+    balance roundrobin
+    option tcp-check
+    
+    # Enable PROXY protocol v2
+    server gate1 10.0.1.10:25565 check send-proxy-v2
+    server gate2 10.0.1.11:25565 check send-proxy-v2
+```
+
+**Gate configuration:**
+```yaml
+config:
+  proxyProtocol: true
+```
+
+### NGINX
+
+**NGINX TCP load balancing with PROXY protocol:**
+
+```nginx
+stream {
+    upstream gate_backend {
+        server 10.0.1.10:25565;
+        server 10.0.1.11:25565;
+    }
+    
+    server {
+        listen 25565;
+        proxy_pass gate_backend;
+        
+        # Enable PROXY protocol
+        proxy_protocol on;
+    }
+}
+```
+
+**Gate configuration:**
+```yaml
+config:
+  proxyProtocol: true
+```
+
+### AWS Network Load Balancer
+
+**Enable PROXY protocol v2:**
+
+1. Create target group for Gate instances
+2. Edit target group attributes:
+   - Enable **"Proxy protocol v2"**
+3. Attach target group to load balancer
+
+**Gate configuration:**
+```yaml
+config:
+  proxyProtocol: true
+```
+
+<Note>
+AWS NLB supports PROXY protocol v2. Application Load Balancers (ALB) do not support TCP passthrough.
+</Note>
+
+### Google Cloud Load Balancer
+
+**TCP Proxy Load Balancer with PROXY protocol:**
+
+```bash
+# Create backend service with PROXY protocol
+gcloud compute backend-services create gate-backend \
+    --protocol TCP \
+    --health-checks tcp-health-check \
+    --global \
+    --proxy-header PROXY_V1
+```
+
+**Gate configuration:**
+```yaml
+config:
+  proxyProtocol: true
+```
+
+## DDoS Protection Services
+
+### TCPShield
+
+**TCPShield automatically uses PROXY protocol:**
+
+**Gate configuration:**
+```yaml
+config:
+  proxyProtocol: true
+```
+
+**Alternative: TCPShield RealIP Protocol**
+
+Gate Lite supports TCPShield's custom RealIP protocol:
+
+```yaml
+config:
+  lite:
+    enabled: true
+    routes:
+      - host: 'play.example.com'
+        backend: 'backend:25565'
+        tcpShieldRealIP: true  # Use TCPShield's protocol
+```
+
+<Note>
+TCPShield's RealIP protocol is proprietary but supported in Gate Lite mode.
+</Note>
+
+### Cloudflare Spectrum
+
+**Cloudflare Spectrum supports PROXY protocol:**
+
+1. Enable **"Proxy Protocol"** in Spectrum settings
+2. Configure Gate to receive PROXY protocol
+
+**Gate configuration:**
+```yaml
+config:
+  proxyProtocol: true
+```
+
+### OVH Game DDoS Protection
+
+**OVH supports PROXY protocol v2:**
+
+1. Enable in OVH control panel
+2. Configure Gate accordingly
+
+**Gate configuration:**
+```yaml
+config:
+  proxyProtocol: true
+```
+
+## Security Considerations
+
+### PROXY Protocol Spoofing
+
+<Warning>
+**NEVER enable `proxyProtocol: true` if Gate is directly exposed to the internet without a trusted load balancer.**
+</Warning>
+
+If enabled without a trusted upstream proxy:
+- Attackers can send fake PROXY protocol headers
+- Spoof any IP address
+- Bypass IP bans and rate limiting
+- Forge connection source information
+
+### Firewall Protection
+
+**Always protect Gate with firewall rules:**
+
+```bash
+# iptables: Only allow connections from load balancer
+iptables -A INPUT -p tcp --dport 25565 -s LOAD_BALANCER_IP -j ACCEPT
+iptables -A INPUT -p tcp --dport 25565 -j DROP
+```
+
+```bash
+# ufw: Only allow load balancer
+sudo ufw allow from LOAD_BALANCER_IP to any port 25565 proto tcp
+sudo ufw deny 25565/tcp
+```
+
+<Note>
+Firewall rules ensure only your trusted load balancer can connect, preventing PROXY protocol spoofing attacks.
+</Note>
+
+### Docker/Kubernetes Network Policies
+
+**Kubernetes NetworkPolicy:**
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gate-proxy-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: gate-proxy
+  policyTypes:
+  - Ingress
+  ingress:
+  # Only allow from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 25565
+```
+
+## Troubleshooting
+
+### All Connections Fail After Enabling
+
+**Symptoms**: No players can connect, timeout errors
+
+**Cause**: `proxyProtocol: true` but load balancer not sending PROXY headers
+
+**Solutions**:
+1. Verify load balancer is sending PROXY protocol
+2. Check load balancer configuration
+3. Disable if not behind a proxy:
+   ```yaml
+   config:
+     proxyProtocol: false
+   ```
+
+### All Players Show Same IP
+
+**Symptoms**: All players have load balancer's IP address
+
+**Cause**: PROXY protocol not enabled
+
+**Solutions**:
+1. Enable PROXY protocol on load balancer
+2. Enable in Gate:
+   ```yaml
+   config:
+     proxyProtocol: true
+   ```
+3. Verify firewall allows load balancer connections
+
+### Rate Limiting Not Working
+
+**Symptoms**: Rate limiting applies to all players collectively
+
+**Cause**: All players share load balancer's IP
+
+**Solution**: Enable PROXY protocol to see real IPs:
+```yaml
+config:
+  proxyProtocol: true
+  quota:
+    connections:
+      enabled: true
+      ops: 5
+      burst: 10
+```
+
+### Invalid PROXY Protocol Header
+
+**Symptoms**: Connection errors, "invalid PROXY protocol header"
+
+**Causes**:
+- Load balancer sending wrong PROXY protocol version
+- Firewall or middleware stripping headers
+- Direct player connections (when expecting PROXY protocol)
+
+**Solutions**:
+1. Verify PROXY protocol version matches (v1 or v2)
+2. Check no middleware is interfering
+3. Ensure only load balancer can connect (firewall)
+
+## Testing PROXY Protocol
+
+### Manual Test
+
+You can manually test PROXY protocol with telnet:
+
+**PROXY protocol v1:**
+```bash
+# Test Gate accepts PROXY protocol
+echo -e "PROXY TCP4 203.0.113.50 198.51.100.10 12345 25565\r\n" | nc gate-server 25565
+```
+
+**PROXY protocol v2:**
+```bash
+# Binary format, use specialized tools
+# Or use HAProxy's test utility
+```
+
+<Warning>
+Only test from authorized IPs when `proxyProtocol: true` is enabled.
+</Warning>
+
+### Validation
+
+Verify Gate sees correct IPs:
+
+1. **Enable debug logging:**
+   ```yaml
+   config:
+     debug: true
+   ```
+
+2. **Connect as player**
+
+3. **Check Gate logs** for player's real IP:
+   ```
+   [INFO] Player connected from 203.0.113.50:12345
+   ```
+
+4. **Verify rate limiting** works per-player
+
+## Best Practices
+
+### Production Deployment
+
+<Note>
+**Recommended configuration for production behind load balancer:**
+</Note>
+
+```yaml
+config:
+  # Accept PROXY protocol from load balancer
+  proxyProtocol: true
+  
+  # Enable rate limiting per real IP
+  quota:
+    connections:
+      enabled: true
+      ops: 5
+      burst: 10
+    logins:
+      enabled: true
+      ops: 0.4
+      burst: 3
+  
+  # Secure forwarding to backends
+  forwarding:
+    mode: velocity
+    velocitySecret: "your-secret"
+```
+
+**Firewall rules:**
+```bash
+# Only allow load balancer
+iptables -A INPUT -p tcp --dport 25565 -s LOAD_BALANCER_IP -j ACCEPT
+iptables -A INPUT -p tcp --dport 25565 -j DROP
+```
+
+### Development/Testing
+
+**Direct connection (no load balancer):**
+```yaml
+config:
+  # Disable PROXY protocol
+  proxyProtocol: false
+```
+
+**With local HAProxy testing:**
+```yaml
+config:
+  # Enable for testing
+  proxyProtocol: true
+```
+
+## Related Topics
+
+- [Forwarding Modes](/security/forwarding-modes) - Forward player info to backends
+- [DDoS Protection](/guide/security/ddos) - Protect against attacks
+- [Gate Lite Mode](/guide/lite) - Lightweight reverse proxy with per-route PROXY protocol
+- [Rate Limiting](/guide/rate-limiting) - Configure quota settings

@@ -1,0 +1,188 @@
+---
+title: Getting Started with Docker
+description: Deploy Gate using Docker with simple docker run commands
+---
+
+Gate provides official Docker images that make it easy to deploy the proxy in containerized environments.
+
+## Quick Start
+
+The fastest way to get Gate running with Docker:
+
+```bash
+docker run -d \
+  --name gate \
+  -p 25565:25565 \
+  -v $(pwd)/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest
+```
+
+This command:
+- Runs Gate in detached mode (`-d`)
+- Names the container `gate`
+- Exposes port 25565 for Minecraft connections
+- Mounts your local `config.yml` into the container
+- Uses the latest Gate image from GitHub Container Registry
+
+## Docker Image Variants
+
+Gate provides two official image variants:
+
+### Default Image (Distroless)
+
+```bash
+ghcr.io/minekube/gate:latest
+ghcr.io/minekube/gate:v0.x.x
+```
+
+- **Base**: `gcr.io/distroless/static-debian12`
+- **Size**: Minimal (~10MB)
+- **Use case**: Production deployments
+- **Pros**: Smallest attack surface, minimal dependencies
+- **Cons**: No shell access for debugging
+
+### JRE Variant
+
+```bash
+ghcr.io/minekube/gate:latest-jre
+ghcr.io/minekube/gate:v0.x.x-jre
+```
+
+- **Base**: `eclipse-temurin:25.0.1_8-jre-alpine`
+- **Size**: Larger (~150MB)
+- **Use case**: When you need Java runtime for plugins/extensions
+- **Pros**: Full Java environment, shell access for debugging
+- **Cons**: Larger image size
+
+## Available Tags
+
+- `latest` - Latest stable release (distroless)
+- `latest-jre` - Latest stable release (JRE variant)
+- `v0.x.x` - Specific version (distroless)
+- `v0.x.x-jre` - Specific version (JRE variant)
+- `edge` - Latest commit from main branch (unstable)
+
+## Basic Configuration
+
+Create a minimal `config.yml` file:
+
+```yaml
+config:
+  bind: 0.0.0.0:25565
+  onlineMode: true
+  servers:
+    lobby: backend-server:25565
+    survival: backend-server:25566
+  try:
+    - lobby
+    - survival
+```
+
+## Running with Custom Ports
+
+To run Gate on a different host port:
+
+```bash
+docker run -d \
+  --name gate \
+  -p 25575:25565 \
+  -v $(pwd)/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest
+```
+
+This maps host port 25575 to container port 25565.
+
+## Environment Variables
+
+Gate supports environment variables for sensitive configuration:
+
+```bash
+docker run -d \
+  --name gate \
+  -p 25565:25565 \
+  -v $(pwd)/config.yml:/config.yml \
+  -e GATE_VELOCITY_SECRET=your-secret-here \
+  -e GATE_BUNGEEGUARD_SECRET=another-secret \
+  ghcr.io/minekube/gate:latest
+```
+
+### Supported Environment Variables
+
+- `GATE_VELOCITY_SECRET` - Secret for Velocity forwarding mode
+- `GATE_BUNGEEGUARD_SECRET` - Secret for BungeeGuard forwarding mode
+
+## Viewing Logs
+
+To view Gate logs:
+
+```bash
+# Follow logs in real-time
+docker logs -f gate
+
+# View last 100 lines
+docker logs --tail 100 gate
+```
+
+## Stopping and Restarting
+
+```bash
+# Stop the container
+docker stop gate
+
+# Start the container
+docker start gate
+
+# Restart the container
+docker restart gate
+```
+
+## Updating Gate
+
+To update to the latest version:
+
+```bash
+# Pull the latest image
+docker pull ghcr.io/minekube/gate:latest
+
+# Stop and remove the old container
+docker stop gate
+docker rm gate
+
+# Start a new container with the latest image
+docker run -d \
+  --name gate \
+  -p 25565:25565 \
+  -v $(pwd)/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest
+```
+
+## Health Checks
+
+Add a health check to monitor Gate's status:
+
+```bash
+docker run -d \
+  --name gate \
+  -p 25565:25565 \
+  -v $(pwd)/config.yml:/config.yml \
+  --health-cmd="timeout 1 bash -c 'cat < /dev/null > /dev/tcp/localhost/25565'" \
+  --health-interval=30s \
+  --health-timeout=3s \
+  --health-retries=3 \
+  ghcr.io/minekube/gate:latest-jre
+```
+
+<Note>
+Health checks require the JRE variant as the distroless image doesn't include shell utilities.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Docker Compose" icon="layer-group" href="/deployment/docker/compose">
+    Deploy multi-container setups with Docker Compose
+  </Card>
+  <Card title="Configuration" icon="gear" href="/deployment/docker/configuration">
+    Learn about volumes, networking, and advanced configuration
+  </Card>
+</CardGroup>

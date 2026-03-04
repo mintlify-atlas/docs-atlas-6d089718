@@ -1,0 +1,668 @@
+---
+title: Server Events
+description: Handle server connections, disconnections, and backend server management in Gate
+---
+
+Server events allow you to monitor and control player connections to backend servers, handle server switching, manage kicks, and respond to server registration changes.
+
+## Server Selection Events
+
+### PlayerChooseInitialServerEvent
+
+Fired when a player has finished the login process and the proxy needs to choose the first server to connect to. The proxy will wait on this event before initiating the connection.
+
+```go
+type PlayerChooseInitialServerEvent struct {
+    player        Player
+    initialServer RegisteredServer // May be nil
+}
+
+func (e *PlayerChooseInitialServerEvent) Player() Player
+func (e *PlayerChooseInitialServerEvent) InitialServer() RegisteredServer
+func (e *PlayerChooseInitialServerEvent) SetInitialServer(server RegisteredServer)
+```
+
+**Example: Custom Initial Server Logic**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.PlayerChooseInitialServerEvent) {
+    player := e.Player()
+    
+    // VIP players go to VIP lobby
+    if player.HasPermission("server.vip") {
+        vipLobby := p.Server("vip-lobby")
+        if vipLobby != nil {
+            e.SetInitialServer(vipLobby)
+            log.Info("VIP player assigned to VIP lobby", "player", player.Username())
+            return
+        }
+    }
+    
+    // New players go to tutorial
+    if isNewPlayer(player) {
+        tutorial := p.Server("tutorial")
+        if tutorial != nil {
+            e.SetInitialServer(tutorial)
+            return
+        }
+    }
+    
+    // Load balance across lobby servers
+    lobbyServer := getLeastPopulatedLobby(p)
+    if lobbyServer != nil {
+        e.SetInitialServer(lobbyServer)
+    }
+})
+```
+
+### ServerPreConnectEvent
+
+Fired before a player connects to a server. You can modify the target server or cancel the connection.
+
+```go
+type ServerPreConnectEvent struct {
+    player         Player
+    original       RegisteredServer
+    server         RegisteredServer
+    previousServer RegisteredServer // May be nil
+}
+
+func (e *ServerPreConnectEvent) Player() Player
+func (e *ServerPreConnectEvent) OriginalServer() RegisteredServer
+func (e *ServerPreConnectEvent) Allow(server RegisteredServer)
+func (e *ServerPreConnectEvent) Deny()
+func (e *ServerPreConnectEvent) Allowed() bool
+func (e *ServerPreConnectEvent) Server() RegisteredServer
+func (e *ServerPreConnectEvent) PreviousServer() RegisteredServer
+```
+
+**Example: Access Control and Load Balancing**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.ServerPreConnectEvent) {
+    player := e.Player()
+    targetServer := e.Server()
+    
+    if targetServer == nil {
+        return
+    }
+    
+    serverName := targetServer.ServerInfo().Name()
+    
+    // Check permissions for restricted servers
+    if strings.HasPrefix(serverName, "admin-") {
+        if !player.HasPermission("server.admin") {
+            e.Deny()
+            player.SendMessage(&component.Text{
+                Content: "You don't have access to this server.",
+                S: component.Style{Color: component.Red},
+            })
+            return
+        }
+    }
+    
+    // Prevent players from connecting to full servers
+    if isServerFull(targetServer) {
+        if !player.HasPermission("server.joinfull") {
+            e.Deny()
+            player.SendMessage(&component.Text{
+                Content: "This server is currently full.",
+                S: component.Style{Color: component.Yellow},
+            })
+            return
+        }
+    }
+    
+    log.Info("Player connecting to server",
+        "player", player.Username(),
+        "server", serverName,
+    )
+})
+```
+
+## Server Connection Events
+
+### ServerConnectedEvent
+
+Fired before the player completely transitions to the target server and the connection to the previous server has been de-established. Use `Server()` to get the target server since `Player.CurrentServer()` is not yet updated.
+
+```go
+type ServerConnectedEvent struct {
+    player         Player
+    server         RegisteredServer
+    previousServer RegisteredServer // May be nil
+    entityID       int
+}
+
+func (s *ServerConnectedEvent) Player() Player
+func (s *ServerConnectedEvent) Server() RegisteredServer
+func (s *ServerConnectedEvent) PreviousServer() RegisteredServer
+func (s *ServerConnectedEvent) EntityID() int
+```
+
+**Example: Track Server Switches**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.ServerConnectedEvent) {
+    player := e.Player()
+    server := e.Server()
+    previousServer := e.PreviousServer()
+    
+    if previousServer != nil {
+        log.Info("Player switched servers",
+            "player", player.Username(),
+            "from", previousServer.ServerInfo().Name(),
+            "to", server.ServerInfo().Name(),
+        )
+    } else {
+        log.Info("Player connected to initial server",
+            "player", player.Username(),
+            "server", server.ServerInfo().Name(),
+        )
+    }
+    
+    // Track player's entity ID for this server
+    trackPlayerEntityID(player, e.EntityID())
+})
+```
+
+### ServerPostConnectEvent
+
+Fired after the player has fully connected to a server. The server the player is now connected to is available via `Player().CurrentServer()`.
+
+```go
+type ServerPostConnectEvent struct {
+    player         Player
+    previousServer RegisteredServer // May be nil
+}
+
+func (s *ServerPostConnectEvent) Player() Player
+func (s *ServerPostConnectEvent) PreviousServer() RegisteredServer
+```
+
+**Example: Send Server-Specific Messages**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.ServerPostConnectEvent) {
+    player := e.Player()
+    previousServer := e.PreviousServer()
+    
+    currentServer := player.CurrentServer()
+    if currentServer == nil {
+        return
+    }
+    
+    serverName := currentServer.Server().ServerInfo().Name()
+    
+    // First time connecting to a server
+    if previousServer == nil {
+        player.SendMessage(&component.Text{
+            Content: fmt.Sprintf("Welcome to %s!", serverName),
+            S: component.Style{Color: component.Green},
+        })
+    } else {
+        player.SendMessage(&component.Text{
+            Content: fmt.Sprintf("You are now on %s", serverName),
+            S: component.Style{Color: component.Gray},
+        })
+    }
+    
+    // Send server-specific instructions
+    sendServerWelcome(player, serverName)
+})
+```
+
+## Kick and Disconnect Events
+
+### KickedFromServerEvent
+
+Fired when a player is kicked from a server. You can either allow the proxy to kick the player, redirect them to another server, or just notify them.
+
+```go
+type KickedFromServerEvent struct {
+    player              Player
+    server              RegisteredServer
+    originalReason      component.Component // May be nil
+    duringServerConnect bool
+    result              ServerKickResult
+}
+
+func (e *KickedFromServerEvent) Player() Player
+func (e *KickedFromServerEvent) Server() RegisteredServer
+func (e *KickedFromServerEvent) OriginalReason() component.Component
+func (e *KickedFromServerEvent) KickedDuringServerConnect() bool
+func (e *KickedFromServerEvent) Result() ServerKickResult
+func (e *KickedFromServerEvent) SetResult(result ServerKickResult)
+```
+
+**ServerKickResult types:**
+
+```go
+// DisconnectPlayerKickResult disconnects the player with a reason
+type DisconnectPlayerKickResult struct {
+    Reason component.Component
+}
+
+// RedirectPlayerKickResult redirects the player to another server
+type RedirectPlayerKickResult struct {
+    Server  RegisteredServer
+    Message component.Component // Optional message
+}
+
+// NotifyKickResult notifies the player but doesn't disconnect
+type NotifyKickResult struct {
+    Message component.Component
+}
+```
+
+**Example: Fallback Server on Kick**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.KickedFromServerEvent) {
+    player := e.Player()
+    server := e.Server()
+    reason := e.OriginalReason()
+    
+    log.Info("Player kicked from server",
+        "player", player.Username(),
+        "server", server.ServerInfo().Name(),
+        "reason", reason,
+    )
+    
+    // If kicked during server connect, try fallback
+    if e.KickedDuringServerConnect() {
+        fallback := p.Server("lobby")
+        if fallback != nil && !ServerInfoEqual(fallback.ServerInfo(), server.ServerInfo()) {
+            e.SetResult(&proxy.RedirectPlayerKickResult{
+                Server: fallback,
+                Message: &component.Text{
+                    Content: "The server you were connecting to is unavailable.\n" +
+                             "You have been connected to the lobby.",
+                    S: component.Style{Color: component.Yellow},
+                },
+            })
+            return
+        }
+    } else {
+        // Player was on a server and got kicked
+        currentServer := player.CurrentServer()
+        lobby := p.Server("lobby")
+        
+        // Send to lobby if they're not already there
+        if lobby != nil && (currentServer == nil || 
+            !ServerInfoEqual(currentServer.Server().ServerInfo(), lobby.ServerInfo())) {
+            
+            e.SetResult(&proxy.RedirectPlayerKickResult{
+                Server: lobby,
+                Message: &component.Text{
+                    Content: fmt.Sprintf("Kicked: %v", reason),
+                    S: component.Style{Color: component.Red},
+                },
+            })
+            return
+        }
+    }
+    
+    // No fallback available, disconnect with custom message
+    e.SetResult(&proxy.DisconnectPlayerKickResult{
+        Reason: &component.Text{
+            Content: "You were kicked from the server.\n" +
+                     fmt.Sprintf("Reason: %v", reason),
+            S: component.Style{Color: component.Red},
+        },
+    })
+})
+```
+
+## Server Transfer Events
+
+### PreTransferEvent
+
+Fired before a player is transferred to another host, either by the backend server or by a plugin using `Player.TransferTo()`.
+
+```go
+type PreTransferEvent struct {
+    player       Player
+    originalAddr net.Addr
+    targetAddr   net.Addr
+    denied       bool
+}
+
+func (e *PreTransferEvent) TransferTo(addr net.Addr)
+func (e *PreTransferEvent) Addr() net.Addr
+func (e *PreTransferEvent) Allowed() bool
+func (e *PreTransferEvent) Player() Player
+```
+
+**Example: Control Player Transfers**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.PreTransferEvent) {
+    player := e.Player()
+    targetAddr := e.Addr()
+    
+    log.Info("Player transfer requested",
+        "player", player.Username(),
+        "target", targetAddr,
+    )
+    
+    // Validate transfer destination
+    if !isAllowedTransferDestination(targetAddr) {
+        log.Warn("Blocked unauthorized transfer",
+            "player", player.Username(),
+            "target", targetAddr,
+        )
+        // Cancel the transfer by not allowing it
+        return
+    }
+    
+    // Optionally redirect to a different address
+    // e.TransferTo(alternativeAddr)
+})
+```
+
+## Server Registration Events
+
+### ServerRegisteredEvent
+
+Fired when a backend server is registered with the proxy. This allows plugins to react to dynamically added servers.
+
+```go
+type ServerRegisteredEvent struct {
+    server RegisteredServer
+}
+
+func (e *ServerRegisteredEvent) Server() RegisteredServer
+```
+
+**Example: Initialize Server Resources**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.ServerRegisteredEvent) {
+    server := e.Server()
+    info := server.ServerInfo()
+    
+    log.Info("Server registered",
+        "name", info.Name(),
+        "addr", info.Addr(),
+    )
+    
+    // Initialize monitoring for this server
+    startServerMonitoring(server)
+    
+    // Add to load balancer
+    addToLoadBalancer(server)
+    
+    // Notify admins
+    notifyAdmins(fmt.Sprintf("New server registered: %s", info.Name()))
+})
+```
+
+### ServerUnregisteredEvent
+
+Fired when a backend server is unregistered from the proxy. This allows plugins to perform necessary cleanup.
+
+```go
+type ServerUnregisteredEvent struct {
+    server ServerInfo
+}
+
+func (e *ServerUnregisteredEvent) ServerInfo() ServerInfo
+```
+
+**Example: Cleanup Server Resources**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.ServerUnregisteredEvent) {
+    serverInfo := e.ServerInfo()
+    
+    log.Info("Server unregistered",
+        "name", serverInfo.Name(),
+        "addr", serverInfo.Addr(),
+    )
+    
+    // Stop monitoring
+    stopServerMonitoring(serverInfo.Name())
+    
+    // Remove from load balancer
+    removeFromLoadBalancer(serverInfo)
+    
+    // Move players to fallback server
+    movePlayersFromServer(p, serverInfo.Name())
+    
+    // Notify admins
+    notifyAdmins(fmt.Sprintf("Server unregistered: %s", serverInfo.Name()))
+})
+```
+
+## Complete Server Management Example
+
+Here's a comprehensive example showing how to build a load balancer with automatic failover:
+
+```go
+package main
+
+import (
+    "log"
+    "sync"
+    "time"
+    
+    "github.com/robinbraemer/event"
+    "go.minekube.com/common/minecraft/component"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+)
+
+type LoadBalancer struct {
+    proxy   *proxy.Proxy
+    servers map[string]*ServerMetrics
+    mu      sync.RWMutex
+}
+
+type ServerMetrics struct {
+    server      proxy.RegisteredServer
+    playerCount int
+    available   bool
+}
+
+func NewLoadBalancer(p *proxy.Proxy) *LoadBalancer {
+    lb := &LoadBalancer{
+        proxy:   p,
+        servers: make(map[string]*ServerMetrics),
+    }
+    
+    lb.registerEvents()
+    return lb
+}
+
+func (lb *LoadBalancer) registerEvents() {
+    mgr := lb.proxy.Event()
+    
+    // Track server registration
+    event.Subscribe(mgr, 0, func(e *proxy.ServerRegisteredEvent) {
+        server := e.Server()
+        name := server.ServerInfo().Name()
+        
+        // Only track lobby servers
+        if !strings.HasPrefix(name, "lobby-") {
+            return
+        }
+        
+        lb.mu.Lock()
+        lb.servers[name] = &ServerMetrics{
+            server:      server,
+            playerCount: 0,
+            available:   true,
+        }
+        lb.mu.Unlock()
+        
+        log.Printf("Added server to load balancer: %s", name)
+    })
+    
+    // Track server unregistration
+    event.Subscribe(mgr, 0, func(e *proxy.ServerUnregisteredEvent) {
+        name := e.ServerInfo().Name()
+        
+        lb.mu.Lock()
+        delete(lb.servers, name)
+        lb.mu.Unlock()
+        
+        log.Printf("Removed server from load balancer: %s", name)
+    })
+    
+    // Balance initial server selection
+    event.Subscribe(mgr, 0, func(e *proxy.PlayerChooseInitialServerEvent) {
+        bestServer := lb.getBestServer()
+        if bestServer != nil {
+            e.SetInitialServer(bestServer)
+        }
+    })
+    
+    // Track player counts
+    event.Subscribe(mgr, 0, func(e *proxy.ServerPostConnectEvent) {
+        player := e.Player()
+        current := player.CurrentServer()
+        if current == nil {
+            return
+        }
+        
+        lb.updatePlayerCount(current.Server().ServerInfo().Name(), 1)
+        
+        // Decrement from previous server
+        if prev := e.PreviousServer(); prev != nil {
+            lb.updatePlayerCount(prev.ServerInfo().Name(), -1)
+        }
+    })
+    
+    event.Subscribe(mgr, 0, func(e *proxy.DisconnectEvent) {
+        player := e.Player()
+        current := player.CurrentServer()
+        if current == nil {
+            return
+        }
+        
+        lb.updatePlayerCount(current.Server().ServerInfo().Name(), -1)
+    })
+    
+    // Handle server kicks with fallback
+    event.Subscribe(mgr, 100, func(e *proxy.KickedFromServerEvent) {
+        player := e.Player()
+        kickedServer := e.Server()
+        
+        // Mark server as potentially unavailable
+        lb.mu.Lock()
+        if metrics, ok := lb.servers[kickedServer.ServerInfo().Name()]; ok {
+            metrics.available = false
+        }
+        lb.mu.Unlock()
+        
+        // Find alternative server
+        alternative := lb.getBestServer()
+        if alternative != nil && 
+            !proxy.ServerInfoEqual(alternative.ServerInfo(), kickedServer.ServerInfo()) {
+            
+            e.SetResult(&proxy.RedirectPlayerKickResult{
+                Server: alternative,
+                Message: &component.Text{
+                    Content: "Server unavailable. Connecting to alternative...",
+                    S: component.Style{Color: component.Yellow},
+                },
+            })
+            
+            log.Printf("Redirected %s from %s to %s",
+                player.Username(),
+                kickedServer.ServerInfo().Name(),
+                alternative.ServerInfo().Name(),
+            )
+        }
+    })
+}
+
+func (lb *LoadBalancer) getBestServer() proxy.RegisteredServer {
+    lb.mu.RLock()
+    defer lb.mu.RUnlock()
+    
+    var best *ServerMetrics
+    lowestCount := int(^uint(0) >> 1) // Max int
+    
+    for _, metrics := range lb.servers {
+        if !metrics.available {
+            continue
+        }
+        
+        if metrics.playerCount < lowestCount {
+            lowestCount = metrics.playerCount
+            best = metrics
+        }
+    }
+    
+    if best != nil {
+        return best.server
+    }
+    return nil
+}
+
+func (lb *LoadBalancer) updatePlayerCount(serverName string, delta int) {
+    lb.mu.Lock()
+    defer lb.mu.Unlock()
+    
+    if metrics, ok := lb.servers[serverName]; ok {
+        metrics.playerCount += delta
+        if metrics.playerCount < 0 {
+            metrics.playerCount = 0
+        }
+    }
+}
+```
+
+## Best Practices
+
+### 1. Always Check for Nil
+
+Many server-related events have fields that may be nil:
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.ServerPostConnectEvent) {
+    previousServer := e.PreviousServer()
+    if previousServer != nil {
+        // Handle server switch
+    } else {
+        // Handle initial connection
+    }
+})
+```
+
+### 2. Use ServerInfoEqual for Comparison
+
+```go
+if proxy.ServerInfoEqual(server1.ServerInfo(), server2.ServerInfo()) {
+    // Servers are the same
+}
+```
+
+### 3. Handle Connection Failures
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.KickedFromServerEvent) {
+    // Always provide a fallback or clear error message
+    // Don't leave players in limbo
+})
+```
+
+### 4. Log Server Events
+
+Always log server-related events for debugging and monitoring:
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.ServerConnectedEvent) {
+    log.Info("Server connection",
+        "player", e.Player().Username(),
+        "server", e.Server().ServerInfo().Name(),
+    )
+})
+```
+
+## See Also
+
+- [Events Overview](/developers/events/overview)
+- [Lifecycle Events](/developers/events/lifecycle)
+- [Player Events](/developers/events/player-events)

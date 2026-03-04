@@ -1,0 +1,365 @@
+---
+title: Lite Mode
+description: Ultra-lightweight reverse proxy for hostname-based routing with minimal resource usage
+---
+
+# Lite Mode
+
+Gate Lite is an ultra-thin lightweight reverse proxy that efficiently routes client connections based on the hostname the player joins with. This allows you to protect multiple backend servers behind a single port using different domains or subdomains.
+
+## Overview
+
+Lite mode makes Gate act as a minimal-overhead reverse proxy between the client and backend servers for host-based connection forwarding. Player connections are offloaded to the destined backend server, including ping requests and player authentication.
+
+<Frame>
+  <img src="/images/lite-mermaid-diagram-LR.svg" alt="Gate Lite routing diagram" />
+</Frame>
+
+### Key Features
+
+- **Hostname-based routing** - Route players based on the domain they connect with
+- **Minimal overhead** - Ultra-lightweight with minimal resource usage
+- **Multiple backends** - Single Gate instance supports multiple backend servers
+- **Load balancing** - Multiple strategies for distributing connections
+- **Proxy behind proxy** - Support for multi-layer proxy setups
+
+<Warning>
+Advanced features like backend server switching or proxy commands are not available in Lite mode. Use standard Gate mode if you need these features.
+</Warning>
+
+## Use Cases
+
+### Multi-Server Hosting
+
+Host multiple independent Minecraft servers behind a single IP address:
+
+```yaml
+config:
+  lite:
+    enabled: true
+    routes:
+      - host: survival.example.com
+        backend: 10.0.0.1:25565
+      - host: creative.example.com
+        backend: 10.0.0.2:25565
+      - host: minigames.example.com
+        backend: 10.0.0.3:25565
+```
+
+Players connect to different servers using different domain names, all through port 25565.
+
+### Development & Testing
+
+Quickly route localhost connections to different backend servers:
+
+```yaml
+config:
+  lite:
+    enabled: true
+    routes:
+      - host: localhost
+        backend: localhost:25566
+      - host: 127.0.0.1
+        backend: localhost:25567
+```
+
+### Kubernetes/Cloud Deployments
+
+Dynamically route to backend services using hostname parameters:
+
+```yaml
+config:
+  lite:
+    enabled: true
+    routes:
+      # abc.domain.com → abc.servers.svc:25565
+      - host: '*.domain.com'
+        backend: '$1.servers.svc:25565'
+```
+
+## Configuration
+
+### Basic Routing
+
+Route connections based on the hostname:
+
+```yaml
+config:
+  bind: 0.0.0.0:25565
+  lite:
+    enabled: true
+    routes:
+      - host: abc.example.com
+        backend: 10.0.0.3:25568
+      - host: '*.example.com'
+        backend: 10.0.0.1:25567
+      - host: [example.com, localhost]
+        backend: 10.0.0.2:25566
+```
+
+In this configuration:
+- `abc.example.com` → `10.0.0.3:25568`
+- Any subdomain of `example.com` → `10.0.0.1:25567`
+- `example.com` or `localhost` → `10.0.0.2:25566`
+
+### Hostname Parameter Routing
+
+Extract parts of hostnames using wildcard patterns and use them in backend addresses:
+
+<CodeGroup>
+```yaml Basic Usage
+lite:
+  routes:
+    # Extract subdomain and use it in backend address
+    - host: '*.domain.com'
+      backend: '$1.servers.svc:25565'
+    # Example: abc.domain.com → abc.servers.svc:25565
+```
+
+```yaml Multiple Parameters
+lite:
+  routes:
+    # Capture multiple parts
+    - host: '*.*.example.com'
+      backend: '$1-$2.servers.svc:25565'
+    # Example: abc.def.example.com → abc-def.servers.svc:25565
+
+    # Use parameters in different order
+    - host: '*.subdomain.*'
+      backend: '$2.$1.backend:25565'
+    # Example: abc.subdomain.com → com.abc.backend:25565
+```
+
+```yaml Single Character Wildcard
+lite:
+  routes:
+    # Using ? for single character matching
+    - host: '?.example.com'
+      backend: 'server-$1:25565'
+    # Example: a.example.com → server-a:25565
+```
+</CodeGroup>
+
+#### Parameter Indexing
+
+- `$1` refers to the first wildcard match (`*` or `?`)
+- `$2` refers to the second wildcard match
+- `$3` refers to the third wildcard match
+- And so on...
+
+Wildcards are numbered in the order they appear in the pattern from left to right.
+
+#### Wildcard Types
+
+- `*` matches any sequence of characters (including empty) and captures it
+- `?` matches any single character and captures it
+
+<Info>
+Gate validates your configuration and will warn you about invalid parameter usage, such as parameters without wildcards or out-of-range parameter indices.
+</Info>
+
+## Load Balancing Strategies
+
+When multiple backends are configured, Gate Lite can distribute connections using different strategies:
+
+<CodeGroup>
+```yaml Sequential (Default)
+lite:
+  routes:
+    - host: play.example.com
+      backend: [server1:25565, server2:25565, server3:25565]
+      # strategy: sequential # (default - can omit)
+```
+
+```yaml Random
+lite:
+  routes:
+    - host: play.example.com
+      backend: [server1:25565, server2:25565, server3:25565]
+      strategy: random
+```
+
+```yaml Round-Robin
+lite:
+  routes:
+    - host: lobby.example.com
+      backend: [lobby1:25565, lobby2:25565, lobby3:25565]
+      strategy: round-robin # Fair rotation
+```
+
+```yaml Least-Connections
+lite:
+  routes:
+    - host: game.example.com
+      backend: [game1:25565, game2:25565, game3:25565]
+      strategy: least-connections # Routes to server with fewest active players
+```
+
+```yaml Lowest-Latency
+lite:
+  routes:
+    - host: global.example.com
+      backend: [us:25565, eu:25565, asia:25565]
+      strategy: lowest-latency # Routes to fastest-responding server
+```
+</CodeGroup>
+
+| Strategy | Description | Algorithm |
+| --- | --- | --- |
+| `sequential` (default) | Sequential backend order | Tries backends in config order |
+| `random` | Random backend selection | Cryptographically secure random |
+| `round-robin` | Sequential cycling | Fair rotation per route |
+| `least-connections` | Routes to least-loaded backend | Real-time connection counting |
+| `lowest-latency` | Routes to fastest backend | Status ping latency measurement |
+
+<Tip>
+**Performance Notes:**
+- All strategies return instantly without health checks
+- Failed connections automatically retry next backend
+- Latency measurement uses status ping timing for accuracy
+- Thread-safe with atomic operations
+</Tip>
+
+## Ping Response Caching
+
+Gate Lite caches server list ping responses to reduce network traffic:
+
+```yaml
+config:
+  lite:
+    enabled: true
+    routes:
+      - host: abc.example.com
+        backend: [10.0.0.3:25565, 10.0.0.4:25565]
+        cachePingTTL: 3m # Cache for 3 minutes
+```
+
+### Disabling the Cache
+
+Set TTL to `-1s` to disable response caching:
+
+```yaml
+config:
+  lite:
+    routes:
+      - host: abc.example.com
+        backend: 10.0.0.3:25568
+        cachePingTTL: -1s # Disable caching
+```
+
+## Fallback Status
+
+Define a custom status response when all backends of a route are offline:
+
+```yaml
+config:
+  lite:
+    enabled: true
+    routes:
+      - host: localhost
+        backend: localhost:25566
+        fallback:
+          motd: |
+            §cLocalhost server is offline.
+            §eCheck back later!
+          version:
+            name: '§cTry again later!'
+            protocol: -1
+```
+
+## Advanced Features
+
+### Modify Virtual Host
+
+Modify the virtual host to match the backend address, useful when backends require specific domains:
+
+```yaml
+config:
+  lite:
+    enabled: true
+    routes:
+      - host: localhost
+        backend: play.example.com
+        modifyVirtualHost: true
+```
+
+Lite will modify the player's handshake packet from `localhost` → `play.example.com` before forwarding.
+
+### Proxy Behind Proxy
+
+Use another proxy (Gate, BungeeCord, Velocity) as a backend server while preserving real player IP:
+
+```yaml
+config:
+  lite:
+    enabled: true
+    routes:
+      - host: abc.example.com
+        backend: 10.0.0.3:25566
+        proxyProtocol: true # Enable HAProxy PROXY protocol
+```
+
+<Info>
+Ensure the backend proxy also has proxy protocol enabled. See documentation for:
+- [Gate Proxy Protocol](https://github.com/minekube/gate/blob/master/config.yml#L85)
+- [Velocity Proxy Protocol](https://docs.papermc.io/velocity/configuration#advanced-section)
+- [BungeeCord Proxy Protocol](https://www.spigotmc.org/wiki/bungeecord-configuration-guide/)
+- [Paper Proxy Protocol](https://docs.papermc.io/paper/reference/global-configuration#proxy-protocol)
+</Info>
+
+## Complete Configuration Example
+
+Here's a complete `config-lite.yml` example:
+
+```yaml
+config:
+  bind: 0.0.0.0:25565
+  lite:
+    enabled: true
+    routes:
+      # Simple routing
+      - host: localhost
+        backend: localhost:25566
+        cachePingTTL: 60s
+        fallback:
+          motd: §cServer offline
+
+      # Wildcard routing
+      - host: '*.example.com'
+        backend: 172.16.0.12:25566
+        proxyProtocol: true
+
+      # Hostname parameter routing
+      - host: '*.domain.com'
+        backend: '$1.servers.svc:25565'
+
+      # Multiple hosts and backends
+      - host: [127.0.0.1, localhost]
+        backend: [172.16.0.12:25566, backend.example.com:25566]
+        strategy: random
+        cachePingTTL: 60s
+        modifyVirtualHost: true
+
+      # Catch-all route
+      - host: '*'
+        backend: 10.0.0.10:25565
+        fallback:
+          motd: §eNo server available for this host.
+
+  connectionTimeout: 5s
+  readTimeout: 30s
+  quota:
+    connections:
+      enabled: true
+      ops: 5
+      burst: 10
+      maxEntries: 1000
+```
+
+## Security Considerations
+
+If you use Lite mode and your backend servers handle player authentication, you're protected by default. For DDoS protection, see the [Anti-DDoS guide](/guide/security/ddos).
+
+<Warning>
+Lite mode forwards authentication to backend servers. Ensure your backends are properly configured for online mode or use proxy protocol for secure setups.
+</Warning>

@@ -1,0 +1,497 @@
+---
+title: Event Listener Example
+description: Complete guide to subscribing to and handling Gate proxy events with practical examples.
+---
+
+This example demonstrates how to listen to various Gate events to create interactive and responsive proxy behavior.
+
+## Overview
+
+This plugin listens to multiple events:
+- **PreLoginEvent** - Validate and allow/deny player logins
+- **PostLoginEvent** - Welcome players after successful login
+- **ServerPostConnectEvent** - Handle server switches
+- **DisconnectEvent** - Log player disconnections
+- **PlayerChatEvent** - Filter or modify chat messages
+- **KickedFromServerEvent** - Handle server kicks gracefully
+
+## Complete Example
+
+### Project Structure
+
+```
+event-listener/
+├── go.mod
+└── main.go
+```
+
+### go.mod
+
+```go go.mod
+module event-listener
+
+go 1.24
+
+require (
+	github.com/robinbraemer/event v0.1.1
+	go.minekube.com/common v0.3.0
+	go.minekube.com/gate v0.62.3
+)
+```
+
+### main.go
+
+```go main.go
+package main
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/robinbraemer/event"
+	"go.minekube.com/common/minecraft/color"
+	"go.minekube.com/common/minecraft/component"
+	"go.minekube.com/gate/cmd/gate"
+	"go.minekube.com/gate/pkg/edition/java/proxy"
+)
+
+func main() {
+	proxy.Plugins = append(proxy.Plugins, proxy.Plugin{
+		Name: "EventListener",
+		Init: func(ctx context.Context, p *proxy.Proxy) error {
+			registerEventListeners(p)
+			return nil
+		},
+	})
+
+	gate.Execute()
+}
+
+func registerEventListeners(p *proxy.Proxy) {
+	// Get the event manager
+	mgr := p.Event()
+
+	// Priority 0 is normal, higher numbers = higher priority
+	const normalPriority = 0
+	const highPriority = 100
+
+	// PreLogin - Validate logins before authentication
+	event.Subscribe(mgr, normalPriority, handlePreLogin)
+
+	// PostLogin - Welcome players after successful login
+	event.Subscribe(mgr, normalPriority, handlePostLogin)
+
+	// ServerPostConnect - Handle server connections
+	event.Subscribe(mgr, normalPriority, handleServerConnect)
+
+	// Disconnect - Track disconnections
+	event.Subscribe(mgr, normalPriority, handleDisconnect)
+
+	// Chat - Filter chat messages
+	event.Subscribe(mgr, highPriority, handleChat)
+
+	// KickedFromServer - Handle server kicks gracefully
+	event.Subscribe(mgr, normalPriority, handleServerKick(p))
+
+	// Ping - Customize server list ping response
+	event.Subscribe(mgr, normalPriority, handlePing)
+}
+
+// PreLoginEvent - Called before player authentication
+func handlePreLogin(e *proxy.PreLoginEvent) {
+	username := e.Username()
+
+	// Example: Block certain usernames
+	bannedNames := []string{"hacker", "cheater", "admin"}
+	for _, banned := range bannedNames {
+		if strings.EqualFold(username, banned) {
+			e.Deny(&component.Text{
+				Content: "This username is not allowed on this server.",
+				S:       component.Style{Color: color.Red},
+			})
+			return
+		}
+	}
+
+	// Example: Maintenance mode
+	maintenanceMode := false
+	if maintenanceMode {
+		e.Deny(&component.Text{
+			Content: "Server is currently in maintenance mode.",
+			S:       component.Style{Color: color.Yellow},
+		})
+		return
+	}
+
+	// Allow the connection
+	e.Allow()
+}
+
+// PostLoginEvent - Called after successful login
+func handlePostLogin(e *proxy.PostLoginEvent) {
+	player := e.Player()
+
+	// Send welcome message
+	_ = player.SendMessage(&component.Text{
+		S: component.Style{Color: color.Gold},
+		Extra: []component.Component{
+			&component.Text{
+				Content: "Welcome to the Network, ",
+			},
+			&component.Text{
+				Content: player.Username(),
+				S:       component.Style{Color: color.Aqua, Bold: component.True},
+			},
+			&component.Text{
+				Content: "!",
+			},
+		},
+	})
+
+	// Log the connection
+	fmt.Printf("[+] %s logged in from %s\n", player.Username(), player.RemoteAddress())
+}
+
+// ServerPostConnectEvent - Called when player connects to a backend server
+func handleServerConnect(e *proxy.ServerPostConnectEvent) {
+	player := e.Player()
+	currentServer := player.CurrentServer()
+	if currentServer == nil {
+		return
+	}
+
+	serverName := currentServer.Server().ServerInfo().Name()
+	previousServer := e.PreviousServer()
+
+	// First server connection
+	if previousServer == nil {
+		_ = player.SendMessage(&component.Text{
+			Content: fmt.Sprintf("Connected to %s", serverName),
+			S:       component.Style{Color: color.Green},
+		})
+		fmt.Printf("[→] %s connected to %s\n", player.Username(), serverName)
+	} else {
+		// Server switch
+		_ = player.SendMessage(&component.Text{
+			Content: fmt.Sprintf("Switched to %s", serverName),
+			S:       component.Style{Color: color.Aqua},
+		})
+		fmt.Printf("[→] %s switched from %s to %s\n",
+			player.Username(),
+			previousServer.ServerInfo().Name(),
+			serverName)
+	}
+}
+
+// DisconnectEvent - Called when player disconnects
+func handleDisconnect(e *proxy.DisconnectEvent) {
+	player := e.Player()
+	status := e.LoginStatus()
+
+	statusStr := "unknown"
+	switch status {
+	case proxy.SuccessfulLoginStatus:
+		statusStr = "clean disconnect"
+	case proxy.ConflictingLoginStatus:
+		statusStr = "conflicting login"
+	case proxy.CanceledByUserLoginStatus:
+		statusStr = "canceled by user"
+	case proxy.CanceledByProxyLoginStatus:
+		statusStr = "canceled by proxy"
+	}
+
+	fmt.Printf("[-] %s disconnected (%s)\n", player.Username(), statusStr)
+}
+
+// PlayerChatEvent - Called when player sends chat message
+func handleChat(e *proxy.PlayerChatEvent) {
+	player := e.Player()
+	message := e.Message()
+
+	// Example: Block messages containing certain words
+	blockedWords := []string{"spam", "badword"}
+	for _, word := range blockedWords {
+		if strings.Contains(strings.ToLower(message), word) {
+			e.SetAllowed(false)
+			_ = player.SendMessage(&component.Text{
+				Content: "Your message contains blocked words.",
+				S:       component.Style{Color: color.Red},
+			})
+			return
+		}
+	}
+
+	// Example: Auto-replace certain phrases
+	if strings.Contains(message, "discord") {
+		newMessage := strings.ReplaceAll(message, "discord", "our community")
+		e.SetMessage(newMessage)
+	}
+
+	// Log chat messages
+	fmt.Printf("[CHAT] %s: %s\n", player.Username(), message)
+}
+
+// KickedFromServerEvent - Handle when player is kicked from backend server
+func handleServerKick(p *proxy.Proxy) func(*proxy.KickedFromServerEvent) {
+	return func(e *proxy.KickedFromServerEvent) {
+		player := e.Player()
+		server := e.Server()
+		reason := e.OriginalReason()
+
+		fmt.Printf("[!] %s was kicked from %s\n", player.Username(), server.ServerInfo().Name())
+
+		// If kicked during server connect, try to send to fallback
+		if e.KickedDuringServerConnect() {
+			// Try to find a fallback server
+			fallbackServer := findFallbackServer(p, server)
+			if fallbackServer != nil {
+				e.SetResult(&proxy.RedirectPlayerKickResult{
+					Server: fallbackServer,
+					Message: &component.Text{
+						S: component.Style{Color: color.Yellow},
+						Extra: []component.Component{
+							&component.Text{
+								Content: "Could not connect to ",
+							},
+							&component.Text{
+								Content: server.ServerInfo().Name(),
+								S: component.Style{Color: color.Red},
+							},
+							&component.Text{
+								Content: ". Redirecting to ",
+							},
+							&component.Text{
+								Content: fallbackServer.ServerInfo().Name(),
+								S: component.Style{Color: color.Green},
+							},
+						},
+					},
+				})
+				return
+			}
+		} else {
+			// Player was kicked from their current server
+			// Just notify them but keep them connected
+			e.SetResult(&proxy.NotifyKickResult{
+				Message: &component.Text{
+					S: component.Style{Color: color.Red},
+					Extra: []component.Component{
+						&component.Text{
+							Content: "You were kicked: ",
+						},
+						reason,
+					},
+				},
+			})
+			return
+		}
+
+		// No fallback available, disconnect with reason
+		e.SetResult(&proxy.DisconnectPlayerKickResult{
+			Reason: reason,
+		})
+	}
+}
+
+// PingEvent - Customize server list response
+func handlePing(e *proxy.PingEvent) {
+	ping := e.Ping()
+
+	// Customize MOTD
+	ping.Description = &component.Text{
+		Extra: []component.Component{
+			&component.Text{
+				Content: "Custom Gate Proxy",
+				S:       component.Style{Color: color.Gold, Bold: component.True},
+			},
+			&component.Text{
+				Content: "\n",
+			},
+			&component.Text{
+				Content: "Powered by Go",
+				S:       component.Style{Color: color.Aqua},
+			},
+		},
+	}
+
+	// Show one more slot than current players
+	ping.Players.Max = ping.Players.Online + 1
+}
+
+// Helper function to find a fallback server
+func findFallbackServer(p *proxy.Proxy, avoid proxy.RegisteredServer) proxy.RegisteredServer {
+	for _, server := range p.Servers() {
+		if server.ServerInfo().Name() != avoid.ServerInfo().Name() {
+			return server
+		}
+	}
+	return nil
+}
+```
+
+## Building and Running
+
+```bash
+# Initialize module
+go mod init event-listener
+go mod tidy
+
+# Build
+go build -o event-listener
+
+# Run
+./event-listener
+```
+
+## Event Priority
+
+Events are processed in priority order (highest first):
+
+```go
+const (
+	lowPriority    = -100
+	normalPriority = 0
+	highPriority   = 100
+)
+
+// High priority handler runs first
+event.Subscribe(mgr, highPriority, myHandler)
+
+// Normal priority
+event.Subscribe(mgr, normalPriority, myHandler)
+
+// Low priority runs last
+event.Subscribe(mgr, lowPriority, myHandler)
+```
+
+## Common Event Patterns
+
+### Allow/Deny Pattern
+
+Many events support allow/deny logic:
+
+```go
+func handlePreLogin(e *proxy.PreLoginEvent) {
+	if shouldBlock {
+		e.Deny(&component.Text{Content: "Access denied"})
+		return
+	}
+	e.Allow()
+}
+```
+
+### Modify and Forward
+
+Some events let you modify data:
+
+```go
+func handleChat(e *proxy.PlayerChatEvent) {
+	// Modify the message
+	e.SetMessage("Modified: " + e.Message())
+
+	// Or block it entirely
+	e.SetAllowed(false)
+}
+```
+
+### Result Pattern
+
+Complex events use result objects:
+
+```go
+func handleKick(e *proxy.KickedFromServerEvent) {
+	// Redirect to another server
+	e.SetResult(&proxy.RedirectPlayerKickResult{
+		Server:  fallbackServer,
+		Message: &component.Text{Content: "Redirecting..."},
+	})
+
+	// Or disconnect
+	e.SetResult(&proxy.DisconnectPlayerKickResult{
+		Reason: &component.Text{Content: "Goodbye"},
+	})
+
+	// Or just notify
+	e.SetResult(&proxy.NotifyKickResult{
+		Message: &component.Text{Content: "Server kicked you"},
+	})
+}
+```
+
+## Available Events
+
+<AccordionGroup>
+  <Accordion title="Connection Events">
+    - **ConnectionEvent** - Raw connection established
+    - **ConnectionHandshakeEvent** - Handshake completed
+    - **PreLoginEvent** - Before authentication
+    - **LoginEvent** - During login process
+    - **PostLoginEvent** - After successful login
+    - **DisconnectEvent** - Player disconnected
+  </Accordion>
+
+  <Accordion title="Server Events">
+    - **PlayerChooseInitialServerEvent** - Choose first server
+    - **ServerPreConnectEvent** - Before connecting to server
+    - **ServerConnectedEvent** - Connected to server
+    - **ServerPostConnectEvent** - After server connection
+    - **KickedFromServerEvent** - Kicked from backend server
+  </Accordion>
+
+  <Accordion title="Communication Events">
+    - **PlayerChatEvent** - Chat message sent
+    - **CommandExecuteEvent** - Command executed
+    - **TabCompleteEvent** - Tab completion requested
+    - **PluginMessageEvent** - Plugin message received
+  </Accordion>
+
+  <Accordion title="Proxy Events">
+    - **PingEvent** - Server list ping
+    - **ReadyEvent** - Proxy ready to accept connections
+    - **PreShutdownEvent** - Before proxy shutdown
+    - **ShutdownEvent** - Proxy shutting down
+  </Accordion>
+
+  <Accordion title="Player Events">
+    - **PlayerSettingsChangedEvent** - Player settings updated
+    - **PlayerModInfoEvent** - Forge mod info received
+    - **GameProfileRequestEvent** - Game profile setup
+    - **PermissionsSetupEvent** - Permissions initialized
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Non-Blocking" icon="gauge">
+    Event handlers should complete quickly. Use goroutines for long operations.
+  </Card>
+  
+  <Card title="Error Handling" icon="shield">
+    Always handle errors gracefully and provide user feedback.
+  </Card>
+  
+  <Card title="Priority Order" icon="arrow-up-1-9">
+    Use appropriate priorities - only use high priority when necessary.
+  </Card>
+  
+  <Card title="Nil Checks" icon="circle-check">
+    Always check for nil values (e.g., PreviousServer, CurrentServer).
+  </Card>
+</CardGroup>
+
+<Warning>
+  Some events like **PreLoginEvent** block the connection. Keep handlers fast to avoid timeouts!
+</Warning>
+
+## Next Steps
+
+- Explore all [Player Events](/developers/events/player-events)
+- Learn about [Server Events](/developers/events/server-events)
+- See [Event Lifecycle](/developers/events/lifecycle)
+- Review [Simple Plugin Example](/developers/examples/simple-plugin)
+
+<Tip>
+  Use `fmt.Printf` for debugging during development, but consider using the structured logger from context in production: `logr.FromContextOrDiscard(ctx)`
+</Tip>

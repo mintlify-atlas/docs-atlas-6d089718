@@ -1,0 +1,213 @@
+---
+title: "Command Registration"
+description: "Learn how to register and manage custom commands in Gate."
+---
+
+# Command Registration
+
+This guide shows you how to register custom commands with Gate's command manager.
+
+## Getting the Command Manager
+
+Access the command manager from the proxy instance:
+
+```go
+proxy := ... // Your proxy instance
+cmdManager := proxy.Command()
+```
+
+## Basic Registration
+
+### Simple Command
+
+Register a command with no arguments:
+
+```go
+import (
+    "go.minekube.com/brigodier"
+    "go.minekube.com/common/minecraft/component"
+    "go.minekube.com/gate/pkg/command"
+)
+
+cmdManager.Register(brigodier.Literal("ping").
+    Executes(command.Command(func(c *command.Context) error {
+        return c.Source.SendMessage(&component.Text{
+            Content: "Pong!",
+        })
+    })),
+)
+```
+
+### Command with Arguments
+
+Add arguments to your command:
+
+```go
+cmdManager.Register(brigodier.Literal("msg").
+    Then(brigodier.Argument("player", brigodier.StringWord).
+        Then(brigodier.Argument("message", brigodier.GreedyString).
+            Executes(command.Command(func(c *command.Context) error {
+                playerName := brigodier.String(c.CommandContext, "player")
+                message := brigodier.String(c.CommandContext, "message")
+                
+                target := proxy.Player(playerName)
+                if target == nil {
+                    return c.Source.SendMessage(&component.Text{
+                        Content: "Player not found",
+                        S: component.Style{Color: color.Red},
+                    })
+                }
+                
+                return target.SendMessage(&component.Text{
+                    Content: message,
+                })
+            })),
+        ),
+    ),
+)
+```
+
+## Command with Aliases
+
+Register a command with multiple names:
+
+```go
+primary := cmdManager.Register(brigodier.Literal("lobby").
+    Executes(command.Command(func(c *command.Context) error {
+        // Command logic
+    })),
+)
+
+// Register aliases
+cmdManager.RegisterWithAliases(
+    brigodier.Literal("lobby"),
+    "hub", "spawn", "l",
+)
+```
+
+Source: `pkg/command/command.go:125-138`
+
+## Permission Requirements
+
+Add permission checks to commands:
+
+```go
+cmdManager.Register(brigodier.Literal("admin").
+    Requires(command.Requires(func(c *command.RequiresContext) bool {
+        return c.Source.HasPermission("gate.command.admin")
+    })).
+    Executes(command.Command(func(c *command.Context) error {
+        return c.Source.SendMessage(&component.Text{
+            Content: "Admin command executed",
+        })
+    })),
+)
+```
+
+## Tab Completion
+
+Provide suggestions for command arguments:
+
+```go
+cmdManager.Register(brigodier.Literal("tp").
+    Then(brigodier.Argument("player", brigodier.StringWord).
+        Suggests(func(ctx context.Context, builder *brigodier.SuggestionsBuilder) *brigodier.Suggestions {
+            // Suggest online player names
+            for _, p := range proxy.Players() {
+                if strings.HasPrefix(strings.ToLower(p.Username()), 
+                                   strings.ToLower(builder.Remaining())) {
+                    builder.Suggest(p.Username())
+                }
+            }
+            return builder.Build()
+        }).
+        Executes(command.Command(func(c *command.Context) error {
+            // Teleport logic
+        })),
+    ),
+)
+```
+
+## Dynamic Registration
+
+Register commands at runtime:
+
+```go
+// Register command after proxy start
+eventMgr.Subscribe(&proxy.PostLoginEvent{}, 0, func(e *proxy.PostLoginEvent) {
+    player := e.Player()
+    
+    // Register player-specific command
+    cmdName := "custom_" + player.Username()
+    cmdManager.Register(brigodier.Literal(cmdName).
+        Executes(command.Command(func(c *command.Context) error {
+            return c.Source.SendMessage(&component.Text{
+                Content: "Your personal command!",
+            })
+        })),
+    )
+})
+```
+
+## Unregistering Commands
+
+Remove commands from the manager:
+
+```go
+// Check if command exists
+if cmdManager.Has("mycommand") {
+    // Remove from dispatcher
+    delete(cmdManager.Root.Children(), "mycommand")
+}
+```
+
+Source: `pkg/command/command.go:114-118`
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Error Handling">
+    Always handle errors gracefully:
+    
+    ```go
+    Executes(command.Command(func(c *command.Context) error {
+        if err := doSomething(); err != nil {
+            return c.Source.SendMessage(&component.Text{
+                Content: "Error: " + err.Error(),
+                S: component.Style{Color: color.Red},
+            })
+        }
+        return nil
+    }))
+    ```
+  </Accordion>
+  
+  <Accordion title="Permission Naming">
+    Use consistent permission naming:
+    - `gate.command.<name>` for basic commands
+    - `gate.admin.<feature>` for admin commands
+    - `myplugin.command.<name>` for plugin commands
+  </Accordion>
+  
+  <Accordion title="Argument Validation">
+    Validate arguments before use:
+    
+    ```go
+    playerName := brigodier.String(c.CommandContext, "player")
+    if playerName == "" {
+        return errors.New("player name cannot be empty")
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Brigadier Guide" icon="book" href="/developers/commands/brigadier">
+    Learn Brigadier's advanced features
+  </Card>
+  <Card title="Complete Example" icon="code" href="/developers/examples/command-plugin">
+    See a full command plugin
+  </Card>
+</CardGroup>

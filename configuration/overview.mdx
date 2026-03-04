@@ -1,0 +1,398 @@
+---
+title: Configuration Overview
+description: Complete guide to configuring Gate Minecraft proxy with YAML settings, file locations, and best practices
+---
+
+# Configuration Overview
+
+Gate uses a YAML configuration file to control all proxy settings including server routing, authentication, compression, forwarding modes, and more.
+
+## Config File Location
+
+Gate looks for `config.yml` in the current working directory by default. You can specify a custom path:
+
+```bash
+# Use default config.yml in current directory
+gate
+
+# Use custom config file
+gate -c /path/to/config.yml
+gate --config /path/to/config.yml
+```
+
+## Supported Formats
+
+Gate supports multiple configuration formats:
+
+- **YAML** - `.yml` or `.yaml` (recommended)
+- **JSON** - `.json`
+- **Environment Variables** - Prefix with `GATE_`
+
+You can mix formats by using a config file and overriding specific values with environment variables.
+
+## Generating Configuration Files
+
+Gate includes built-in configuration templates. Generate them using:
+
+```bash
+# Write to config.yml
+gate config --write
+
+# Generate specific template type
+gate config --type simple --write
+gate config --type lite --write
+
+# Output to custom file
+gate config > my-config.yml
+gate config --type simple > simple-config.yml
+```
+
+## Configuration Templates
+
+Gate provides several configuration templates for different use cases:
+
+<CardGroup cols={2}>
+  <Card title="Simple" icon="square-1">
+    Minimal configuration for basic proxy setups with just server routing
+  </Card>
+  <Card title="Full" icon="square-2">
+    Complete configuration with all options and detailed comments (recommended)
+  </Card>
+  <Card title="Lite" icon="square-3">
+    Lightweight reverse proxy mode for hostname-based routing
+  </Card>
+  <Card title="Bedrock" icon="square-4">
+    Cross-play configuration for Java and Bedrock Edition players
+  </Card>
+</CardGroup>
+
+## Basic Configuration Structure
+
+Here's a minimal working configuration:
+
+```yaml config-simple.yml
+config:
+  # Bind address for incoming connections
+  bind: 0.0.0.0:25565
+  
+  # Online mode (authenticate with Mojang)
+  onlineMode: true
+  
+  # Register backend servers
+  servers:
+    lobby: localhost:25566
+    survival: localhost:25567
+    creative: localhost:25568
+  
+  # Try servers in order on login
+  try:
+    - lobby
+    - survival
+```
+
+## Complete Configuration Example
+
+A more complete configuration with commonly used options:
+
+```yaml config.yml
+config:
+  # Network settings
+  bind: 0.0.0.0:25565
+  onlineMode: true
+  
+  # Backend servers
+  servers:
+    lobby: localhost:25566
+    survival: localhost:25567
+    creative: localhost:25568
+    minigames: localhost:25569
+  
+  # Connection order on login/fallback
+  try:
+    - lobby
+    - survival
+  
+  # Status ping response
+  status:
+    motd: |
+      §bWelcome to My Server
+      §fPowered by Gate
+    showMaxPlayers: 1000
+    favicon: server-icon.png
+    logPingRequests: false
+  
+  # Compression settings
+  compression:
+    threshold: 256  # Compress packets larger than 256 bytes
+    level: -1       # Default compression level
+  
+  # Player info forwarding
+  forwarding:
+    mode: velocity
+    velocitySecret: your-secret-here
+  
+  # Timeouts
+  connectionTimeout: 5s
+  readTimeout: 30s
+  
+  # Rate limiting
+  quota:
+    connections:
+      enabled: true
+      ops: 5
+      burst: 10
+      maxEntries: 1000
+```
+
+## Configuration Sections
+
+Gate configuration is organized into logical sections:
+
+### Core Settings
+
+<ParamField path="config.bind" type="string" default="0.0.0.0:25565">
+  The address to bind for incoming Minecraft client connections
+</ParamField>
+
+<ParamField path="config.onlineMode" type="boolean" default="true">
+  Whether to authenticate players with Mojang's authentication servers. Set to `false` for offline/cracked servers (not recommended)
+</ParamField>
+
+<ParamField path="config.debug" type="boolean" default="false">
+  Enable debug logging for troubleshooting. Shows detailed packet and connection information
+</ParamField>
+
+### Server Configuration
+
+- **[servers](/configuration/servers)** - Register backend Minecraft servers
+- **[try](/configuration/servers#try-list)** - Define server connection order for login and fallback
+- **[forcedHosts](/configuration/forced-hosts)** - Route players based on connection hostname
+
+### Client Connection Settings
+
+- **[status](/configuration/status-ping)** - Configure server list ping response (MOTD, favicon, player count)
+- **[compression](/configuration/compression)** - Packet compression settings
+- **[forwarding](/configuration/forwarding)** - Player info forwarding to backend servers
+
+### Advanced Features
+
+<ParamField path="config.acceptTransfers" type="boolean" default="false">
+  Allow players transferred from other hosts via the Transfer packet (Minecraft 1.20.5+)
+</ParamField>
+
+<ParamField path="config.bungeePluginChannelEnabled" type="boolean" default="true">
+  Support BungeeCord plugin messaging channels. Disable if backend servers are untrusted
+</ParamField>
+
+<ParamField path="config.builtinCommands" type="boolean" default="true">
+  Register built-in proxy commands like `/server` and `/glist`
+</ParamField>
+
+<ParamField path="config.requireBuiltinCommandPermissions" type="boolean" default="false">
+  Whether players need permissions to execute built-in commands. Enable in production
+</ParamField>
+
+<ParamField path="config.announceProxyCommands" type="boolean" default="true">
+  Declare proxy commands to 1.13+ clients for tab completion
+</ParamField>
+
+<ParamField path="config.forceKeyAuthentication" type="boolean" default="true">
+  Enforce the public key security standard added in Minecraft 1.19
+</ParamField>
+
+### Timeouts
+
+<ParamField path="config.connectionTimeout" type="duration" default="5s">
+  How long to wait when connecting to a backend server before timing out
+</ParamField>
+
+<ParamField path="config.readTimeout" type="duration" default="30s">
+  How long to wait for data from a backend server before timing out. Increase for Forge servers
+</ParamField>
+
+<ParamField path="config.failoverOnUnexpectedServerDisconnect" type="boolean" default="true">
+  Attempt to reconnect players to another server when unexpectedly disconnected
+</ParamField>
+
+### Security Settings
+
+<ParamField path="config.onlineModeKickExistingPlayers" type="boolean" default="false">
+  Kick existing players when an online-mode player with the same name joins. Useful for mixed online/offline setups
+</ParamField>
+
+<ParamField path="config.proxyProtocol" type="boolean" default="false">
+  Support HAProxy PROXY protocol for incoming connections. Don't enable unless you know what this is
+</ParamField>
+
+### Shutdown Message
+
+<ParamField path="config.shutdownReason" type="string">
+  The disconnect message shown to players when the proxy shuts down. Supports both legacy `§` format and modern JSON text components
+
+  ```yaml
+  shutdownReason: |
+    §cGate proxy is shutting down...
+    Please reconnect in a moment!
+  ```
+</ParamField>
+
+## Rate Limiting (Quota)
+
+Protect your proxy from connection flooding:
+
+<ParamField path="config.quota.connections" type="object">
+  Rate limit new connections per IP block
+  
+  ```yaml
+  quota:
+    connections:
+      enabled: true
+      ops: 5           # 5 connections per second
+      burst: 10        # Allow bursts up to 10
+      maxEntries: 1000 # Track up to 1000 IP blocks
+  ```
+</ParamField>
+
+<ParamField path="config.quota.logins" type="object">
+  Rate limit login attempts per IP block
+  
+  ```yaml
+  quota:
+    logins:
+      enabled: true
+      ops: 0.4         # 0.4 logins per second
+      burst: 3         # Allow bursts up to 3
+      maxEntries: 1000
+  ```
+</ParamField>
+
+## Query Protocol
+
+Support for GameSpy 4 (Minecraft query protocol) on UDP:
+
+<ParamField path="config.query.enabled" type="boolean" default="false">
+  Enable query protocol support
+</ParamField>
+
+<ParamField path="config.query.port" type="integer" default="25577">
+  UDP port for query protocol
+</ParamField>
+
+<ParamField path="config.query.showPlugins" type="boolean" default="false">
+  Show plugin information in query responses
+</ParamField>
+
+```yaml
+query:
+  enabled: true
+  port: 25577
+  showPlugins: false
+```
+
+## Authentication
+
+Customize Mojang authentication:
+
+<ParamField path="config.auth.sessionServerUrl" type="string">
+  Base URL for Mojang session server. Customize for alternative authentication servers
+  
+  Default: `https://sessionserver.mojang.com/session/minecraft/hasJoined`
+  
+  ```yaml
+  auth:
+    sessionServerUrl: https://example.com/session/minecraft/hasJoined
+  ```
+</ParamField>
+
+## Configuration Validation
+
+Gate validates your configuration on startup and reports:
+
+- **Errors** - Critical issues that prevent startup (invalid addresses, unknown forwarding modes)
+- **Warnings** - Non-critical issues you should be aware of (offline mode, no servers configured)
+
+```bash
+# Check configuration without starting proxy
+gate config --validate
+```
+
+## Live Config Reload
+
+Gate automatically watches for configuration file changes and reloads when detected. You can also manually reload:
+
+```bash
+# In Gate console
+/greload
+
+# Via Gate API
+curl -X POST http://localhost:8080/reload
+```
+
+Some settings require a full restart:
+- `bind` address
+- `lite.enabled`
+- `bedrock.enabled`
+
+See [Configuration Reload](/configuration/reload) for details.
+
+## Environment Variables
+
+Override configuration with environment variables using the `GATE_` prefix:
+
+```bash
+# Override bind address
+export GATE_CONFIG_BIND="0.0.0.0:25565"
+
+# Set Velocity secret
+export GATE_CONFIG_FORWARDING_VELOCITYSECRET="your-secret"
+
+# Enable debug mode
+export GATE_CONFIG_DEBUG="true"
+
+gate
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use online mode in production">
+    Always set `onlineMode: true` in production to verify players with Mojang. Offline mode allows anyone to join with any username.
+  </Accordion>
+  
+  <Accordion title="Enable player info forwarding">
+    Configure [forwarding](/configuration/forwarding) to pass real player IPs and UUIDs to backend servers. Use `velocity` mode for best security.
+  </Accordion>
+  
+  <Accordion title="Configure rate limiting">
+    Enable quota settings to protect against connection floods and login spam attacks.
+  </Accordion>
+  
+  <Accordion title="Use meaningful server names">
+    Choose clear server names like `lobby`, `survival`, `creative` instead of `server1`, `server2`.
+  </Accordion>
+  
+  <Accordion title="Set appropriate timeouts">
+    Increase `readTimeout` to 60s or more if using Forge/modded servers which can be slow to respond.
+  </Accordion>
+  
+  <Accordion title="Secure your secrets">
+    Use environment variables for sensitive values like `velocitySecret` instead of committing them to config files.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Servers" icon="server" href="/configuration/servers">
+    Configure backend servers and connection order
+  </Card>
+  <Card title="Forced Hosts" icon="globe" href="/configuration/forced-hosts">
+    Route players based on connection hostname
+  </Card>
+  <Card title="Status Ping" icon="signal" href="/configuration/status-ping">
+    Customize MOTD, favicon, and server list appearance
+  </Card>
+  <Card title="Forwarding" icon="share-nodes" href="/configuration/forwarding">
+    Set up player info forwarding to backend servers
+  </Card>
+</CardGroup>

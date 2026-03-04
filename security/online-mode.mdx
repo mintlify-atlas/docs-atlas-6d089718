@@ -1,0 +1,273 @@
+---
+title: "Online Mode - Mojang Authentication"
+description: "Configure Gate's online mode for Mojang authentication and understand the security implications of offline mode."
+---
+
+# Online Mode
+
+Online mode determines how Gate authenticates players connecting to your network. This is one of the most critical security settings for your Minecraft proxy.
+
+## What is Online Mode?
+
+Online mode controls whether Gate verifies player identities with Mojang's authentication servers:
+
+- **Online Mode (Enabled)**: Gate authenticates every player with Mojang's session servers, ensuring that only legitimate Minecraft account holders can connect.
+- **Offline Mode (Disabled)**: Gate skips authentication, allowing anyone to connect with any username. This is **not recommended** for production servers.
+
+<Note>
+Gate defaults to online mode enabled (`onlineMode: true`) for security reasons.
+</Note>
+
+## Configuration
+
+The online mode setting is configured in your `config.yml`:
+
+```yaml
+config:
+  # Whether to use the proxy in online (authenticate players with Mojang API) or offline mode (not recommended).
+  onlineMode: true
+```
+
+### Online Mode (Recommended)
+
+```yaml
+config:
+  onlineMode: true
+```
+
+When online mode is enabled:
+
+1. Player connects to Gate
+2. Gate generates an authentication challenge
+3. Player's client contacts Mojang's session servers
+4. Gate verifies the response with Mojang
+5. Upon successful verification, player is authenticated
+
+**Benefits:**
+- Prevents username spoofing
+- Ensures only legitimate Minecraft account holders can join
+- Protects against unauthorized access
+- Maintains consistent player UUIDs across servers
+
+### Offline Mode
+
+```yaml
+config:
+  onlineMode: false
+```
+
+<Warning>
+Offline mode disables Mojang authentication. Players can join with any username, making your server vulnerable to impersonation attacks.
+</Warning>
+
+When offline mode is enabled:
+- No authentication with Mojang servers
+- Players can choose any username
+- UUIDs are generated based on username (not account)
+- Anyone can impersonate admins or other players
+
+**Use cases for offline mode:**
+- Local testing and development
+- Private LAN networks
+- Offline gameplay environments
+- Testing with cracked clients (use with extreme caution)
+
+## Authentication Flow
+
+Gate uses RSA encryption and secure authentication flows to verify players:
+
+1. **Connection Establishment**: Player initiates connection to Gate
+2. **Encryption Request**: Gate sends public key to client
+3. **Encryption Response**: Client encrypts shared secret with public key
+4. **Session Verification**: Gate verifies session with Mojang's API at `https://sessionserver.mojang.com/session/minecraft/hasJoined`
+5. **Authentication Success**: Player is granted access with verified UUID
+
+<Note>
+The authentication flow uses AES-CFB8 encryption to secure the connection after the initial handshake.
+</Note>
+
+## Custom Authentication Servers
+
+You can customize the Mojang session server URL for alternative authentication providers:
+
+```yaml
+config:
+  auth:
+    # Customize the base URL for the Mojang session server
+    # Defaults to https://sessionserver.mojang.com/session/minecraft/hasJoined
+    sessionServerUrl: https://example.com/mitm/session/minecraft/hasJoined
+```
+
+This is useful for:
+- Using alternative authentication services
+- Implementing custom authentication logic
+- Testing authentication flows in development
+
+<Warning>
+Only use trusted authentication servers. Malicious authentication servers can compromise your network security.
+</Warning>
+
+## Online Mode with Existing Players
+
+Gate provides a setting to handle conflicts when premium players join:
+
+```yaml
+config:
+  # Whether to kick existing connected player when an online-mode player with the same name joins.
+  onlineModeKickExistingPlayers: false
+```
+
+When set to `true`:
+- A premium account holder can join and disconnect the cracked player using their name
+- Useful for servers transitioning from offline to online mode
+- Helps enforce legitimate account usage
+
+<Warning>
+Enabling this setting allows premium players to potentially "bully" offline players by repeatedly joining and kicking them. Use with caution.
+</Warning>
+
+## Backend Server Configuration
+
+When Gate is in online mode, your backend servers should be configured appropriately:
+
+### Recommended Setup
+
+**Backend servers should run in offline mode** because Gate handles authentication:
+
+**Spigot/Paper** (`server.properties`):
+```properties
+online-mode=false
+```
+
+**Velocity/BungeeCord** (backend servers):
+```properties
+online-mode=false
+```
+
+<Note>
+Gate authenticates players, then forwards their verified information to backend servers using a forwarding mode. This is why backend servers can safely run in offline mode.
+</Note>
+
+### Why Backend Servers Should Be Offline
+
+1. **Avoid Double Authentication**: Gate already authenticated the player
+2. **Faster Connections**: No redundant Mojang API calls
+3. **Consistent Player Data**: Gate manages the authenticated session
+4. **Proper Forwarding**: Player info (UUID, IP) is forwarded securely
+
+See [Forwarding Modes](/security/forwarding-modes) for how to securely forward player information to backend servers.
+
+## Security Best Practices
+
+### For Production Servers
+
+<Warning>
+**Always use online mode for production servers accessible from the internet.**
+</Warning>
+
+1. **Enable online mode**: `onlineMode: true`
+2. **Use modern forwarding**: Configure [Velocity forwarding](/security/forwarding-modes) with a secret
+3. **Protect backend servers**: Configure firewalls to only accept connections from Gate
+4. **Enable rate limiting**: Protect against brute-force authentication attempts
+5. **Monitor authentication**: Enable logging for authentication events
+
+### For Development Environments
+
+```yaml
+config:
+  # Safe for local development only
+  onlineMode: false
+  forwarding:
+    mode: none
+```
+
+<Note>
+Offline mode is acceptable for local development, but never deploy offline mode to production.
+</Note>
+
+## Rate Limiting Authentication
+
+Gate includes built-in rate limiting for login attempts:
+
+```yaml
+config:
+  quota:
+    # Limit how many login requests can be made by the same IP range
+    logins:
+      enabled: true
+      burst: 3        # Maximum login attempts
+      ops: 0.4        # 0.4 logins per second (1 every 2.5 seconds)
+      maxEntries: 1000
+```
+
+This protects against:
+- Brute-force authentication attacks
+- Excessive Mojang API requests
+- Denial of service through authentication spam
+
+## Troubleshooting
+
+### Players Can't Connect (Online Mode)
+
+**Symptoms**: "Failed to verify username" or "Invalid session"
+
+**Solutions**:
+1. Verify Mojang services are online: https://status.mojang.com/
+2. Check firewall allows outbound HTTPS to Mojang
+3. Ensure players are using legitimate Minecraft accounts
+4. Verify `sessionServerUrl` is correct if customized
+
+### Players Can Impersonate Others
+
+**Cause**: Offline mode is enabled
+
+**Solution**: Enable online mode:
+```yaml
+config:
+  onlineMode: true
+```
+
+### Backend Server Authentication Errors
+
+**Cause**: Backend server is in online mode while Gate is forwarding
+
+**Solution**: Set backend servers to offline mode:
+```properties
+# server.properties
+online-mode=false
+```
+
+Then configure proper [forwarding mode](/security/forwarding-modes).
+
+## Migration Guide
+
+### Migrating from Offline to Online Mode
+
+<Warning>
+Migrating from offline to online mode will change player UUIDs, causing players to lose their data (inventory, homes, permissions, etc.).
+</Warning>
+
+**Steps:**
+
+1. **Backup everything**: Player data, worlds, databases
+2. **Enable online mode**:
+   ```yaml
+   config:
+     onlineMode: true
+   ```
+3. **Convert player data**: Use a UUID migration plugin like:
+   - [UUIDConverter](https://www.spigotmc.org/resources/uuidconverter.110026/)
+   - Custom migration scripts
+4. **Update permissions**: Reconfigure permissions with new UUIDs
+5. **Test thoroughly**: Verify all player data migrated correctly
+6. **Communicate**: Inform players about the change
+
+<Note>
+Consider enabling `onlineModeKickExistingPlayers: true` during migration to help enforce legitimate accounts.
+</Note>
+
+## Related Topics
+
+- [Forwarding Modes](/security/forwarding-modes) - Secure player info forwarding
+- [Key Authentication](/security/key-authentication) - 1.19+ security features
+- [DDoS Protection](/guide/security/ddos) - Rate limiting and quota management

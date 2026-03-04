@@ -1,0 +1,214 @@
+---
+title: Binary Installation
+description: Download and install Gate from pre-built binaries for Linux, macOS, and Windows
+---
+
+Gate is distributed as a single executable with no Java required. Choose your preferred installation method below.
+
+## Quick Install
+
+The easiest way to install Gate is using our automated installation scripts:
+
+<CodeGroup>
+
+```bash Linux/macOS
+curl -fsSL https://gate.minekube.com/install | bash
+```
+
+```powershell Windows
+powershell -c "irm https://gate.minekube.com/install.ps1 | iex"
+```
+
+</CodeGroup>
+
+The installation script will:
+- Detect your system architecture automatically
+- Download the latest Gate release
+- Verify the binary with SHA256 checksum
+- Install to your user directory (no admin/root required)
+- Provide instructions to add Gate to your PATH
+
+### Installation Output
+
+```bash
+✨ Installing Gate...
+⚡ Downloading Gate 0.42.2 for darwin-arm64...
+✅ Checksum verified for gate_0.42.2_darwin_arm64
+✨ Successfully installed Gate 0.42.2!
+📍 Location: /Users/robin/.local/bin/gate
+🚀 Run gate to start the proxy
+```
+
+## Manual Installation
+
+If you prefer to download and install Gate manually:
+
+<Steps>
+
+<Step title="Download the binary">
+  Visit the [GitHub Releases](https://github.com/minekube/gate/releases/latest) page and download the appropriate binary for your system:
+  
+  - **Linux AMD64**: `gate_*_linux_amd64`
+  - **Linux ARM64**: `gate_*_linux_arm64`
+  - **macOS Intel**: `gate_*_darwin_amd64`
+  - **macOS Apple Silicon**: `gate_*_darwin_arm64`
+  - **Windows AMD64**: `gate_*_windows_amd64.exe`
+  - **Windows ARM64**: `gate_*_windows_arm64.exe`
+</Step>
+
+<Step title="Verify the checksum (recommended)">
+  Download the corresponding `.sha256` file and verify:
+  
+  ```bash Linux/macOS
+  sha256sum -c gate_*_sha256.txt
+  ```
+  
+  ```powershell Windows
+  CertUtil -hashfile gate.exe SHA256
+  ```
+</Step>
+
+<Step title="Make executable and move to PATH">
+  <CodeGroup>
+  
+  ```bash Linux/macOS
+  chmod +x gate*
+  mkdir -p ~/.local/bin
+  mv gate* ~/.local/bin/gate
+  ```
+  
+  ```powershell Windows
+  New-Item -ItemType Directory -Force -Path "$env:LOCALAPPDATA\Gate\bin"
+  Move-Item gate.exe "$env:LOCALAPPDATA\Gate\bin\gate.exe"
+  ```
+  
+  </CodeGroup>
+</Step>
+
+<Step title="Add to PATH">
+  <CodeGroup>
+  
+  ```bash Linux/macOS (bash)
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+  source ~/.bashrc
+  ```
+  
+  ```zsh macOS (zsh)
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+  source ~/.zshrc
+  ```
+  
+  ```powershell Windows
+  [Environment]::SetEnvironmentVariable(
+    "Path",
+    [Environment]::GetEnvironmentVariable("Path", "User") + ";$env:LOCALAPPDATA\Gate\bin",
+    "User"
+  )
+  ```
+  
+  </CodeGroup>
+</Step>
+
+<Step title="Verify installation">
+  ```bash
+  gate --version
+  ```
+</Step>
+
+</Steps>
+
+## Installation Locations
+
+The installation scripts use the following default locations:
+
+- **Linux/macOS**: `~/.local/bin/gate`
+- **Windows**: `%LOCALAPPDATA%\Gate\bin\gate.exe`
+
+Both locations are in user space and don't require administrative privileges.
+
+## Running Gate
+
+After installation, start Gate with:
+
+```bash
+gate
+```
+
+Gate will create a default `config.yml` file in the current directory if one doesn't exist. See the [Configuration](/configuration/overview) guide for customization options.
+
+## Updating Gate
+
+To update to the latest version, simply run the installation script again or manually download the new binary.
+
+## Uninstalling
+
+To remove Gate, delete the binary:
+
+<CodeGroup>
+
+```bash Linux/macOS
+rm ~/.local/bin/gate
+```
+
+```powershell Windows
+Remove-Item "$env:LOCALAPPDATA\Gate\bin\gate.exe"
+```
+
+</CodeGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+
+<Accordion title="Command not found after installation">
+  The binary is installed but not in your PATH. Either:
+  
+  - Add the installation directory to your PATH (see Step 4 above)
+  - Run Gate using the full path: `~/.local/bin/gate` or `$env:LOCALAPPDATA\Gate\bin\gate.exe`
+</Accordion>
+
+<Accordion title="Permission denied when running gate">
+  On Linux/macOS, ensure the binary is executable:
+  
+  ```bash
+  chmod +x ~/.local/bin/gate
+  ```
+</Accordion>
+
+<Accordion title="Checksum verification failed">
+  This security check ensures the downloaded binary matches the official release:
+  
+  - Try downloading again (file may have been corrupted)
+  - If the issue persists, report it on [GitHub Issues](https://github.com/minekube/gate/issues)
+</Accordion>
+
+<Accordion title="Installation script fails">
+  Try manual installation instead, or check:
+  
+  - Internet connectivity
+  - Write permissions to installation directory
+  - Available disk space
+</Accordion>
+
+</AccordionGroup>
+
+## Security
+
+Our installation process prioritizes security:
+
+- **User space installation**: No system-wide changes or root/admin required
+- **Checksum verification**: All binaries verified with SHA256
+- **Official sources only**: Downloads from GitHub releases exclusively
+- **Open source scripts**: Review [install script](https://github.com/minekube/gate/blob/master/.web/docs/public/install) and [install.ps1](https://github.com/minekube/gate/blob/master/.web/docs/public/install.ps1)
+- **No data collection**: Scripts don't collect or transmit any data
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Configure Gate for your network
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="/getting-started/quickstart">
+    Get your proxy running in minutes
+  </Card>
+</CardGroup>

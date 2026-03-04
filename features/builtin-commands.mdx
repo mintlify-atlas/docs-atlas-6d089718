@@ -1,0 +1,259 @@
+---
+title: Built-in Commands
+description: Learn about Gate's built-in proxy commands including /server, /glist, and /send for managing players across your network
+---
+
+# Built-in Commands
+
+Gate includes several useful built-in commands by default for managing players and servers across your proxy network.
+
+<Info>
+If you want to add custom commands, refer to the [Developers Guide](/developers/).
+</Info>
+
+## Available Commands
+
+### /server
+
+Allows players to view and switch between servers in the network.
+
+**Permission**: `gate.command.server`
+
+**Usage**:
+```
+/server - List available servers
+/server <server-name> - Connect to a specific server
+```
+
+**Example**:
+```
+/server
+> Available servers: lobby, survival, creative, minigames
+
+/server survival
+> Connecting to survival...
+```
+
+### /glist
+
+View the number of players on the Gate proxy instance.
+
+**Permission**: `gate.command.glist`
+
+**Usage**:
+```
+/glist - Show total player count
+/glist all - List players per server
+```
+
+**Example**:
+```
+/glist
+> There are 42 player(s) online.
+
+/glist all
+> [lobby] 12 player(s)
+> [survival] 20 player(s)
+> [creative] 10 player(s)
+```
+
+### /send
+
+Send one or all players to another server.
+
+**Permission**: `gate.command.send`
+
+**Usage**:
+```
+/send <player> <server> - Send a specific player to a server
+/send all <server> - Send all players to a server
+/send current <server> - Send all players on your current server to another server
+```
+
+**Example**:
+```
+/send Steve survival
+> Sent Steve to survival
+
+/send all lobby
+> Sent all players to lobby
+
+/send current minigames
+> Sent all players from your current server to minigames
+```
+
+## Command Reference
+
+| Command | Permission | Description |
+| --- | --- | --- |
+| `/server` | `gate.command.server` | View and switch to another server |
+| `/glist` | `gate.command.glist` | View player counts across the network |
+| `/send` | `gate.command.send` | Send one or all players to another server |
+
+## Configuration
+
+### Permission Requirements
+
+By default, built-in commands don't require the listed permissions - all players can use them.
+
+To require permissions for built-in commands, enable permission checks in `config.yml`:
+
+```yaml
+config:
+  requireBuiltinCommandPermissions: true
+```
+
+With this enabled, players will need the appropriate permission to use each command:
+- Players without `gate.command.server` cannot use `/server`
+- Players without `gate.command.glist` cannot use `/glist`
+- Players without `gate.command.send` cannot use `/send`
+
+<Tip>
+This is useful if you only want to allow players with certain permissions (like staff) to use specific commands.
+</Tip>
+
+### Disabling Built-in Commands
+
+If you want to disable all built-in commands (for example, to use your own custom implementations), set:
+
+```yaml
+config:
+  builtinCommands: false
+```
+
+With this setting:
+- `/server`, `/glist`, and `/send` will not be registered
+- You can implement your own versions of these commands
+- No conflicts with custom command plugins
+
+<Warning>
+Disabling built-in commands means players will have no default way to switch servers or view the player list unless you provide custom alternatives.
+</Warning>
+
+## Permission System Integration
+
+Gate's built-in commands integrate with your permission system. How you grant permissions depends on your setup:
+
+### LuckPerms Example
+
+```bash
+# Grant server switching to all players
+lp group default permission set gate.command.server true
+
+# Grant player list viewing to moderators
+lp group moderator permission set gate.command.glist true
+
+# Grant send command to admins only
+lp group admin permission set gate.command.send true
+```
+
+### Permission Groups Example
+
+```yaml
+# Typical permission setup
+default-players:
+  - gate.command.server  # Can switch servers
+
+moderators:
+  - gate.command.server
+  - gate.command.glist  # Can view player lists
+
+admins:
+  - gate.command.server
+  - gate.command.glist
+  - gate.command.send  # Can send players between servers
+```
+
+## Use Cases
+
+### Server Networks
+
+Allow players to navigate your network:
+```
+/server lobby - Return to lobby
+/server survival - Join survival server
+/server minigames - Join minigames
+```
+
+### Staff Management
+
+Moderators can check player distribution:
+```
+/glist all - See which servers have the most players
+/send all lobby - Move everyone to lobby for maintenance
+```
+
+### Load Balancing
+
+Administrators can balance player loads:
+```
+/glist all - Check server populations
+/send current survival2 - Move players from survival1 to survival2
+```
+
+## Common Patterns
+
+### Hub-Based Network
+
+For networks with a central hub:
+```yaml
+config:
+  requireBuiltinCommandPermissions: true
+  servers:
+    lobby: localhost:25566
+    survival: localhost:25567
+    creative: localhost:25568
+  try:
+    - lobby  # Players start at lobby
+```
+
+Permissions:
+- All players: `gate.command.server` (can leave lobby)
+- Staff only: `gate.command.send` (can summon players)
+
+### Restricted Access
+
+For networks with private servers:
+```yaml
+config:
+  requireBuiltinCommandPermissions: true
+```
+
+Permissions:
+- Public servers: Grant `gate.command.server` to everyone
+- VIP servers: Grant `gate.permission.server.vip` separately
+- Admin tools: Grant `gate.command.send` to admins only
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Enable Permissions" icon="shield-check">
+    Enable `requireBuiltinCommandPermissions: true` for production networks to control access
+  </Card>
+  
+  <Card title="Grant Incrementally" icon="layer-group">
+    Start with minimal permissions and grant more based on player roles
+  </Card>
+  
+  <Card title="Document Commands" icon="book">
+    Tell players about available commands in your server MOTD or welcome message
+  </Card>
+  
+  <Card title="Monitor Usage" icon="chart-line">
+    Log command usage to detect abuse or unexpected patterns
+  </Card>
+</CardGroup>
+
+## Custom Commands
+
+If you need more advanced functionality beyond the built-in commands, you can:
+
+1. **Create custom commands** - Use the Gate plugin API to add your own commands
+2. **Use external plugins** - Install community-made command plugins
+3. **Disable built-ins** - Set `builtinCommands: false` and implement your own versions
+
+For details on creating custom commands, see the [Developers Guide](/developers/).
+
+<Info>
+Built-in commands are designed to be simple and efficient. For complex features like GUIs, cooldowns, or database integration, consider creating custom commands.
+</Info>

@@ -1,0 +1,554 @@
+---
+title: 'Sound System - Packet-Level Sound Handling'
+description: 'Understand how Gate handles sound packets at the protocol level for playing and controlling sounds.'
+---
+
+# Sound System Protocol
+
+Gate's sound system operates at the protocol level, sending and managing sound packets for Minecraft clients. This page documents the packet-level implementation details.
+
+<Note>
+For the high-level Sound API documentation, see [Sound API - Play and Control Sounds](/developers/sound).
+</Note>
+
+## Sound Packets
+
+Gate handles two main types of sound packets:
+
+### Sound Effect Packet
+
+Plays a named sound effect at a specific location:
+
+```go
+type SoundEffect struct {
+    Name   string      // Sound identifier (e.g., "entity.player.levelup")
+    Source SoundSource // Category/source of sound
+    X      float64     // X coordinate (absolute)
+    Y      float64     // Y coordinate (absolute)
+    Z      float64     // Z coordinate (absolute)
+    Volume float32     // Volume (0.0 to infinity)
+    Pitch  float32     // Pitch (0.5 to 2.0)
+    Seed   int64       // Random seed (1.19+)
+}
+```
+
+### Entity Sound Effect Packet
+
+Plays a sound at an entity's position:
+
+```go
+type EntitySoundEffect struct {
+    Name     string      // Sound identifier
+    Source   SoundSource // Category/source
+    EntityID int         // Entity to play sound from
+    Volume   float32     // Volume (0.0 to infinity)
+    Pitch    float32     // Pitch (0.5 to 2.0)
+    Seed     int64       // Random seed (1.19+)
+}
+```
+
+## Sound Sources
+
+Sound sources determine which client volume slider controls the sound:
+
+```go
+type SoundSource int
+
+const (
+    MasterSource   SoundSource = 0  // Master volume
+    MusicSource    SoundSource = 1  // Music
+    RecordSource   SoundSource = 2  // Jukebox/Music discs
+    WeatherSource  SoundSource = 3  // Weather
+    BlockSource    SoundSource = 4  // Blocks
+    HostileSource  SoundSource = 5  // Hostile creatures
+    NeutralSource  SoundSource = 6  // Neutral creatures
+    PlayerSource   SoundSource = 7  // Players
+    AmbientSource  SoundSource = 8  // Ambient sounds
+    VoiceSource    SoundSource = 9  // Voice/Speech
+    UISource       SoundSource = 10 // UI sounds (1.21.5+)
+)
+```
+
+### Source String Mapping
+
+```go
+var sourceNames = map[string]SoundSource{
+    "master":   MasterSource,
+    "music":    MusicSource,
+    "record":   RecordSource,
+    "weather":  WeatherSource,
+    "block":    BlockSource,
+    "hostile":  HostileSource,
+    "neutral":  NeutralSource,
+    "player":   PlayerSource,
+    "ambient":  AmbientSource,
+    "voice":    VoiceSource,
+    "ui":       UISource,
+}
+
+func ParseSource(name string) (SoundSource, error) {
+    if source, ok := sourceNames[strings.ToLower(name)]; ok {
+        return source, nil
+    }
+    return 0, fmt.Errorf("unknown sound source: %s", name)
+}
+```
+
+## Stop Sound Packet
+
+Stops playing sounds based on filters:
+
+```go
+type StopSound struct {
+    Source *SoundSource  // nil = all sources
+    Sound  *string       // nil = all sounds
+}
+```
+
+### Filter Combinations
+
+| Source | Sound | Effect |
+|--------|-------|--------|
+| `nil` | `nil` | Stop all sounds |
+| `&source` | `nil` | Stop all sounds from source |
+| `nil` | `&name` | Stop specific sound from all sources |
+| `&source` | `&name` | Stop specific sound from specific source |
+
+## Protocol Version Handling
+
+### Version Requirements
+
+```go
+const (
+    MinSoundProtocol   = version.Minecraft_1_19_3  // Minimum version
+    MinUISourceVersion = version.Minecraft_1_21_5  // UI source support
+)
+
+func CheckSoundSupport(protocol proto.Protocol) error {
+    if protocol.Lower(MinSoundProtocol) {
+        return ErrUnsupportedClientProtocol
+    }
+    return nil
+}
+
+func CheckUISourceSupport(protocol proto.Protocol) error {
+    if protocol.Lower(MinUISourceVersion) {
+        return ErrUISourceUnsupported
+    }
+    return nil
+}
+```
+
+### Version-Specific Encoding
+
+Sound packets encode differently based on protocol version:
+
+```go
+func (s *SoundEffect) Encode(c *proto.PacketContext, wr io.Writer) error {
+    // Write sound name
+    if err := util.WriteString(wr, s.Name); err != nil {
+        return err
+    }
+    
+    // Write source (added in 1.9)
+    if c.Protocol.GreaterEqual(version.Minecraft_1_9) {
+        if err := util.WriteVarInt(wr, int(s.Source)); err != nil {
+            return err
+        }
+    }
+    
+    // Write position (multiplied by 8)
+    if err := util.WriteInt32(wr, int32(s.X*8)); err != nil {
+        return err
+    }
+    if err := util.WriteInt32(wr, int32(s.Y*8)); err != nil {
+        return err
+    }
+    if err := util.WriteInt32(wr, int32(s.Z*8)); err != nil {
+        return err
+    }
+    
+    // Write volume and pitch
+    if err := util.WriteFloat32(wr, s.Volume); err != nil {
+        return err
+    }
+    if err := util.WriteFloat32(wr, s.Pitch); err != nil {
+        return err
+    }
+    
+    // Write seed (added in 1.19)
+    if c.Protocol.GreaterEqual(version.Minecraft_1_19) {
+        if err := util.WriteInt64(wr, s.Seed); err != nil {
+            return err
+        }
+    }
+    
+    return nil
+}
+```
+
+## Sound Package Implementation
+
+The sound package (`go.minekube.com/gate/pkg/edition/java/sound`) provides high-level functions that construct and send sound packets:
+
+### Playing Sounds
+
+```go
+import "go.minekube.com/gate/pkg/edition/java/sound"
+
+// Play sound at entity position
+func Play(target Player, snd *Sound, emitter Player) error {
+    // Validate protocol support
+    if err := CheckSoundSupport(target.Protocol()); err != nil {
+        return err
+    }
+    
+    // Check if UI source is supported
+    if snd.Source == UISource {
+        if err := CheckUISourceSupport(target.Protocol()); err != nil {
+            return err
+        }
+    }
+    
+    // Verify both players on same server
+    targetServer := target.CurrentServer()
+    emitterServer := emitter.CurrentServer()
+    if targetServer == nil || emitterServer == nil {
+        return ErrNotConnected
+    }
+    if !ServerInfoEqual(targetServer.ServerInfo(), emitterServer.ServerInfo()) {
+        return ErrDifferentServers
+    }
+    
+    // Get emitter's entity ID
+    entityID, ok := emitter.CurrentServerEntityID()
+    if !ok {
+        return ErrNotConnected
+    }
+    
+    // Construct packet
+    packet := &EntitySoundEffect{
+        Name:     snd.Name,
+        Source:   snd.Source,
+        EntityID: entityID,
+        Volume:   snd.Volume,
+        Pitch:    snd.Pitch,
+        Seed:     snd.Seed,
+    }
+    
+    // Send to target player
+    return target.WritePacket(packet)
+}
+```
+
+### Stopping Sounds
+
+```go
+// Stop sounds based on filters
+func Stop(target Player, source *SoundSource, soundName *string) error {
+    // Validate protocol support
+    if err := CheckSoundSupport(target.Protocol()); err != nil {
+        return err
+    }
+    
+    // Construct packet
+    packet := &StopSound{
+        Source: source,
+        Sound:  soundName,
+    }
+    
+    // Send to target player
+    return target.WritePacket(packet)
+}
+
+// Helper: Stop all sounds
+func StopAll(target Player) error {
+    return Stop(target, nil, nil)
+}
+
+// Helper: Stop sounds from source
+func StopSource(target Player, source SoundSource) error {
+    return Stop(target, &source, nil)
+}
+
+// Helper: Stop specific sound
+func StopSound(target Player, name string) error {
+    return Stop(target, nil, &name)
+}
+```
+
+## Entity ID Management
+
+Sound packets require the entity ID of the emitter player on the backend server:
+
+### Getting Entity ID
+
+```go
+// player.go
+func (p *connectedPlayer) CurrentServerEntityID() (int, bool) {
+    serverConn := p.connectedServer()
+    if serverConn == nil {
+        return 0, false
+    }
+    return serverConn.entityID, true
+}
+```
+
+The entity ID is stored when the player joins the backend server:
+
+```go
+// serverConnection stores entity ID from JoinGame packet
+type serverConnection struct {
+    entityID int
+    // ... other fields
+}
+
+func (s *serverConnection) handleJoinGame(packet *packet.JoinGame) {
+    s.entityID = packet.EntityID
+    // ... rest of join game handling
+}
+```
+
+### Server Matching
+
+Verify both players are on the same backend server:
+
+```go
+func (p *connectedPlayer) CheckServerMatch(other Player) bool {
+    // Get entity IDs
+    thisEntityID, thisOk := p.CurrentServerEntityID()
+    otherEntityID, otherOk := other.CurrentServerEntityID()
+    
+    if !thisOk || !otherOk {
+        return false  // One or both not connected
+    }
+    
+    // Get server connections
+    thisServer := p.connectedServer()
+    otherServer := other.connectedServer()
+    
+    if thisServer == nil || otherServer == nil {
+        return false
+    }
+    
+    // Compare server info
+    return ServerInfoEqual(
+        thisServer.Server().ServerInfo(),
+        otherServer.Server().ServerInfo(),
+    )
+}
+```
+
+## Error Handling
+
+The sound system defines specific errors:
+
+```go
+var (
+    // Player version is below 1.19.3
+    ErrUnsupportedClientProtocol = errors.New("player version must be 1.19.3+ to use sounds")
+    
+    // Player tried to use UI source on version < 1.21.5
+    ErrUISourceUnsupported = errors.New("UI sound source requires version 1.21.5+")
+    
+    // Player not connected to a backend server
+    ErrNotConnected = errors.New("player is not connected to a server")
+    
+    // Players are on different backend servers
+    ErrDifferentServers = errors.New("emitter and target must be on the same server")
+)
+```
+
+### Error Handling Example
+
+```go
+import "errors"
+
+func playSound(target, emitter Player, snd *Sound) {
+    err := sound.Play(target, snd, emitter)
+    if err != nil {
+        switch {
+        case errors.Is(err, sound.ErrUnsupportedClientProtocol):
+            // Player version too old
+            target.SendMessage(&component.Text{
+                Content: "Your client version doesn't support sounds",
+            })
+            
+        case errors.Is(err, sound.ErrUISourceUnsupported):
+            // UI source not supported
+            log.Warn("Player tried to use UI sound source on old version")
+            
+        case errors.Is(err, sound.ErrNotConnected):
+            // Not connected to server yet
+            log.Debug("Attempted to play sound but player not connected")
+            
+        case errors.Is(err, sound.ErrDifferentServers):
+            // Players on different servers
+            log.Warn("Cannot play sound - players on different servers")
+            
+        default:
+            log.Error(err, "Failed to play sound")
+        }
+    }
+}
+```
+
+## Packet Interception
+
+Intercept sound packets in session handlers:
+
+```go
+import (
+    "go.minekube.com/gate/pkg/edition/java/proto/packet"
+    "go.minekube.com/gate/pkg/gate/proto"
+)
+
+type CustomSessionHandler struct {
+    netmc.SessionHandler
+}
+
+func (h *CustomSessionHandler) HandlePacket(pc *proto.PacketContext) {
+    switch p := pc.Packet.(type) {
+    case *packet.SoundEffect:
+        h.log.Info("Sound effect",
+            "name", p.Name,
+            "source", p.Source,
+            "position", fmt.Sprintf("%.1f,%.1f,%.1f", p.X, p.Y, p.Z),
+            "volume", p.Volume,
+            "pitch", p.Pitch,
+        )
+        
+        // Modify sound properties
+        if p.Volume > 2.0 {
+            p.Volume = 2.0  // Limit volume
+        }
+        
+        h.SessionHandler.HandlePacket(pc)
+        
+    case *packet.EntitySoundEffect:
+        h.log.Info("Entity sound effect",
+            "name", p.Name,
+            "source", p.Source,
+            "entityID", p.EntityID,
+            "volume", p.Volume,
+            "pitch", p.Pitch,
+        )
+        
+        h.SessionHandler.HandlePacket(pc)
+        
+    case *packet.StopSound:
+        sourceStr := "all"
+        if p.Source != nil {
+            sourceStr = p.Source.String()
+        }
+        soundStr := "all"
+        if p.Sound != nil {
+            soundStr = *p.Sound
+        }
+        
+        h.log.Info("Stop sound",
+            "source", sourceStr,
+            "sound", soundStr,
+        )
+        
+        h.SessionHandler.HandlePacket(pc)
+        
+    default:
+        h.SessionHandler.HandlePacket(pc)
+    }
+}
+```
+
+## Minecraft Limitations
+
+Be aware of known Minecraft bugs:
+
+### MC-146721: Stereo Sounds Not Positional
+
+In Minecraft 1.14+, stereo sounds are played globally instead of positionally. This is a client bug that cannot be fixed by the proxy.
+
+### MC-138832: Volume/Pitch Ignored (1.14-1.16.5)
+
+In Minecraft 1.14 through 1.16.5, the client ignores volume and pitch values in sound packets. Always use default volume (1.0) and pitch (1.0) for these versions.
+
+```go
+func adjustSoundForVersion(snd *Sound, protocol proto.Protocol) *Sound {
+    if protocol.GreaterEqual(version.Minecraft_1_14) &&
+       protocol.Lower(version.Minecraft_1_17) {
+        // Volume and pitch ignored in 1.14-1.16.5
+        snd.Volume = 1.0
+        snd.Pitch = 1.0
+    }
+    return snd
+}
+```
+
+### Invalid Sound Names
+
+The client silently ignores invalid sound names - no error is shown to the player. Always validate sound names against the [Minecraft sounds.json](https://minecraft.wiki/w/Sounds.json).
+
+## Complete Example: Custom Sound System
+
+```go
+package main
+
+import (
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+    "go.minekube.com/gate/pkg/edition/java/sound"
+)
+
+// Custom sound manager with caching
+type SoundManager struct {
+    sounds map[string]*sound.Sound
+}
+
+func NewSoundManager() *SoundManager {
+    return &SoundManager{
+        sounds: make(map[string]*sound.Sound),
+    }
+}
+
+// Register a named sound
+func (sm *SoundManager) Register(name string, snd *sound.Sound) {
+    sm.sounds[name] = snd
+}
+
+// Play a registered sound
+func (sm *SoundManager) Play(name string, target, emitter proxy.Player) error {
+    snd, ok := sm.sounds[name]
+    if !ok {
+        return fmt.Errorf("sound not registered: %s", name)
+    }
+    return sound.Play(target, snd, emitter)
+}
+
+// Initialize with common sounds
+func InitSoundManager() *SoundManager {
+    sm := NewSoundManager()
+    
+    sm.Register("levelup", sound.NewSound(
+        "entity.player.levelup",
+        sound.SourcePlayer,
+    ))
+    
+    sm.Register("pling", sound.NewSound(
+        "block.note_block.pling",
+        sound.SourceBlock,
+    ).WithPitch(1.5))
+    
+    sm.Register("success", sound.NewSound(
+        "ui.button.click",
+        sound.SourceUI,
+    ).WithVolume(0.5))
+    
+    return sm
+}
+```
+
+## See Also
+
+- [Sound API - Play and Control Sounds](/developers/sound) - High-level sound API
+- [Packets](/developers/protocol/packets) - Packet encoding/decoding
+- [Plugin Channels](/developers/protocol/plugin-channels) - Plugin messaging
+- [Minecraft Wiki - Sounds](https://minecraft.wiki/w/Sounds.json) - Complete sound list
+- [Protocol - Sound Effect](https://wiki.vg/Protocol#Sound_Effect) - Protocol documentation

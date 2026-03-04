@@ -1,0 +1,529 @@
+---
+title: Server API
+description: Interface for managing and interacting with backend servers
+---
+
+The server API provides interfaces for representing backend Minecraft servers and managing their registration with the proxy.
+
+## Overview
+
+The server API consists of three main components:
+- `ServerInfo` - Basic server information (name and address)
+- `RegisteredServer` - A server registered with the proxy
+- `ServerConnection` - An active player connection to a server
+
+Source: `pkg/edition/java/proxy/server.go`
+
+## ServerInfo
+
+ServerInfo represents basic information about a backend server.
+
+### Creating ServerInfo
+
+```go
+import (
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+    "go.minekube.com/gate/pkg/util/netutil"
+)
+
+// Parse server address
+addr, err := netutil.Parse("localhost:25566", "tcp")
+if err != nil {
+    return err
+}
+
+// Create server info
+info := proxy.NewServerInfo("lobby", addr)
+```
+
+<ParamField path="name" type="string" required>
+  The server name (e.g., "lobby", "survival").
+</ParamField>
+
+<ParamField path="addr" type="net.Addr" required>
+  The server network address.
+</ParamField>
+
+### ServerInfo Methods
+
+```go
+// Get server name
+name := info.Name()
+
+// Get server address
+addr := info.Addr()
+log.Info("server",
+    "name", name,
+    "network", addr.Network(),
+    "address", addr.String(),
+)
+```
+
+<ResponseField name="Name" type="string">
+  Returns the server name.
+</ResponseField>
+
+<ResponseField name="Addr" type="net.Addr">
+  Returns the server address.
+</ResponseField>
+
+### Comparing ServerInfo
+
+Check if two ServerInfo instances are equal:
+
+```go
+// Compare two ServerInfo instances
+if proxy.ServerInfoEqual(info1, info2) {
+    log.Info("servers are the same")
+}
+```
+
+<ParamField path="a" type="ServerInfo" required>
+  First ServerInfo to compare.
+</ParamField>
+
+<ParamField path="b" type="ServerInfo" required>
+  Second ServerInfo to compare.
+</ParamField>
+
+<ResponseField name="bool" type="bool">
+  Returns true if both ServerInfo instances have the same name, address string, and network. Always returns false if either is nil.
+</ResponseField>
+
+## RegisteredServer
+
+A RegisteredServer represents a backend server that has been registered with the proxy.
+
+### Getting RegisteredServer
+
+```go
+// Get a registered server by name
+server := p.Server("lobby")
+if server == nil {
+    log.Info("server not found")
+    return
+}
+
+// Get all registered servers
+allServers := p.Servers()
+for _, srv := range allServers {
+    log.Info("server", "name", srv.ServerInfo().Name())
+}
+```
+
+### RegisteredServer Methods
+
+```go
+// Get server info
+info := server.ServerInfo()
+log.Info("server details",
+    "name", info.Name(),
+    "addr", info.Addr(),
+)
+
+// Get players on this server (on THIS proxy only)
+players := server.Players()
+count := players.Len()
+log.Info("players on server", "count", count)
+
+// Iterate through players
+players.Range(func(p proxy.Player) bool {
+    log.Info("player", "name", p.Username())
+    return true // continue iteration
+})
+```
+
+<ResponseField name="ServerInfo" type="ServerInfo">
+  Returns the server's information.
+</ResponseField>
+
+<ResponseField name="Players" type="Players">
+  Returns the players connected to this server on THIS proxy instance only.
+</ResponseField>
+
+### Comparing RegisteredServer
+
+Check if two RegisteredServer instances are equal:
+
+```go
+// Compare two RegisteredServer instances
+if proxy.RegisteredServerEqual(server1, server2) {
+    log.Info("servers are the same")
+}
+```
+
+<ResponseField name="bool" type="bool">
+  Returns true if both servers have equal ServerInfo. Always returns false if either is nil.
+</ResponseField>
+
+## Server Registration
+
+### Registering Servers
+
+Register a backend server with the proxy:
+
+```go
+// Create server info
+addr, _ := netutil.Parse("play.example.com:25565", "tcp")
+info := proxy.NewServerInfo("survival", addr)
+
+// Register the server
+registered, err := p.Register(info)
+if err == proxy.ErrServerAlreadyExists {
+    log.Info("server already registered")
+    // err also returns the existing server as 'registered'
+} else if err != nil {
+    return fmt.Errorf("registration failed: %w", err)
+}
+
+log.Info("server registered", "name", registered.ServerInfo().Name())
+```
+
+<ParamField path="info" type="ServerInfo" required>
+  The server information to register. Must have a valid name and address.
+</ParamField>
+
+<ResponseField name="RegisteredServer" type="RegisteredServer">
+  The registered server instance.
+</ResponseField>
+
+<ResponseField name="error" type="error">
+  Returns `ErrServerAlreadyExists` if a server with the same name is already registered. The existing server is also returned.
+</ResponseField>
+
+### Unregistering Servers
+
+Remove a server from the proxy:
+
+```go
+// Unregister by ServerInfo
+if p.Unregister(info) {
+    log.Info("server unregistered", "name", info.Name())
+} else {
+    log.Info("server not found or info doesn't match")
+}
+```
+
+<ParamField path="info" type="ServerInfo" required>
+  The ServerInfo that exactly matches the registered server.
+</ParamField>
+
+<ResponseField name="bool" type="bool">
+  Returns true if the server was found and unregistered.
+</ResponseField>
+
+<Note>
+  The ServerInfo must **exactly match** the registered server's info (same name and address). Use `ServerInfoEqual()` to verify.
+</Note>
+
+## ServerConnection
+
+ServerConnection represents an active connection from a player to a backend server.
+
+Source: `pkg/edition/java/proxy/server.go:208`
+
+### Getting ServerConnection
+
+```go
+// Get current server connection from player
+conn := player.CurrentServer()
+if conn == nil {
+    log.Info("player not connected to any server")
+    return
+}
+```
+
+### ServerConnection Methods
+
+```go
+// Get the server
+server := conn.Server()
+log.Info("connected to", "server", server.ServerInfo().Name())
+
+// Get the player
+player := conn.Player()
+log.Info("player on server", "username", player.Username())
+```
+
+<ResponseField name="Server" type="RegisteredServer">
+  Returns the server that this connection is connected to.
+</ResponseField>
+
+<ResponseField name="Player" type="Player">
+  Returns the player associated with this connection.
+</ResponseField>
+
+### Sending Plugin Messages
+
+Send plugin messages to the backend server:
+
+```go
+import "go.minekube.com/gate/pkg/edition/java/proxy/message"
+
+// Get current server connection
+conn := player.CurrentServer()
+if conn == nil {
+    return
+}
+
+// Send plugin message to the backend server
+channel := message.MinecraftNamespace("mybrand")
+data := []byte{...}
+err := conn.SendPluginMessage(channel, data)
+if err != nil {
+    log.Error(err, "failed to send plugin message")
+}
+```
+
+<ParamField path="identifier" type="message.ChannelIdentifier" required>
+  The plugin message channel identifier.
+</ParamField>
+
+<ParamField path="data" type="[]byte" required>
+  The message data to send.
+</ParamField>
+
+<Note>
+  This sends the message to the **backend server**, not to the player's client. To send to the client, use `player.SendPluginMessage()`.
+</Note>
+
+## Custom Server Dialer
+
+Implement custom connection logic for servers:
+
+```go
+import (
+    "context"
+    "net"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+)
+
+// Custom server info with custom dialer
+type CustomServerInfo struct {
+    proxy.ServerInfo
+}
+
+func (s *CustomServerInfo) Dial(ctx context.Context, player proxy.Player) (net.Conn, error) {
+    // Custom connection logic
+    log.Info("custom dial", "player", player.Username())
+    
+    // Example: Connect through a SOCKS proxy
+    dialer := &net.Dialer{}
+    return dialer.DialContext(ctx, "tcp", s.Addr().String())
+}
+
+// Register server with custom dialer
+baseInfo := proxy.NewServerInfo("custom", addr)
+customInfo := &CustomServerInfo{ServerInfo: baseInfo}
+registered, err := p.Register(customInfo)
+```
+
+<ParamField path="ctx" type="context.Context" required>
+  Context for the dial operation.
+</ParamField>
+
+<ParamField path="player" type="Player" required>
+  The player initiating the connection.
+</ParamField>
+
+<ResponseField name="net.Conn" type="net.Conn">
+  The established network connection to the server.
+</ResponseField>
+
+## Custom Handshake Address
+
+Customize the server address sent in the handshake packet:
+
+```go
+// Custom server info with custom handshake address
+type CustomHandshakeServer struct {
+    proxy.ServerInfo
+}
+
+func (s *CustomHandshakeServer) HandshakeAddr(
+    defaultPlayerVirtualHost string,
+    player proxy.Player,
+) string {
+    // Customize the handshake address
+    // This is useful for IP forwarding or custom routing
+    return fmt.Sprintf("%s\x00%s", 
+        defaultPlayerVirtualHost,
+        player.RemoteAddr().String(),
+    )
+}
+```
+
+<ParamField path="defaultPlayerVirtualHost" type="string">
+  The default virtual host from the player's connection.
+</ParamField>
+
+<ParamField path="player" type="Player" required>
+  The player connecting to the server.
+</ParamField>
+
+<ResponseField name="string" type="string">
+  The modified server address to use in the handshake packet.
+</ResponseField>
+
+## Working with Players List
+
+The `Players` interface provides safe concurrent access to server players:
+
+```go
+// Get players on a server
+players := server.Players()
+
+// Get count
+count := players.Len()
+
+// Iterate all players
+players.Range(func(p proxy.Player) bool {
+    // Send message to each player
+    p.SendMessage(&component.Text{
+        Content: "Server announcement!",
+    })
+    return true // continue iteration, false to break
+})
+
+// Convert to slice
+playerSlice := proxy.PlayersToSlice[proxy.Player](players)
+for _, p := range playerSlice {
+    log.Info("player", "name", p.Username())
+}
+```
+
+<ResponseField name="Len" type="int">
+  Returns the number of players.
+</ResponseField>
+
+<ResponseField name="Range" type="func(func(Player) bool)">
+  Iterates through players. The callback returns false to stop iteration.
+</ResponseField>
+
+## Broadcasting Messages
+
+Broadcast plugin messages to all players on a server:
+
+```go
+import "go.minekube.com/gate/pkg/edition/java/proxy/message"
+
+// Get all players on the server as message sinks
+players := server.Players()
+sinks := proxy.PlayersToSlice[message.ChannelMessageSink](players)
+
+// Broadcast plugin message
+channel := message.MinecraftNamespace("broadcast")
+data := []byte("Hello everyone!")
+proxy.BroadcastPluginMessage(sinks, channel, data)
+```
+
+## Complete Example
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "time"
+    
+    "go.minekube.com/common/minecraft/component"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+    "go.minekube.com/gate/pkg/util/netutil"
+)
+
+func setupServers(p *proxy.Proxy) error {
+    // Register multiple servers
+    servers := map[string]string{
+        "lobby":    "localhost:25566",
+        "survival": "localhost:25567",
+        "creative": "localhost:25568",
+    }
+    
+    for name, addrStr := range servers {
+        addr, err := netutil.Parse(addrStr, "tcp")
+        if err != nil {
+            return fmt.Errorf("invalid address for %s: %w", name, err)
+        }
+        
+        info := proxy.NewServerInfo(name, addr)
+        if _, err := p.Register(info); err != nil {
+            return fmt.Errorf("failed to register %s: %w", name, err)
+        }
+        
+        fmt.Printf("Registered server: %s (%s)\n", name, addrStr)
+    }
+    
+    return nil
+}
+
+func monitorServers(p *proxy.Proxy) {
+    ticker := time.NewTicker(30 * time.Second)
+    defer ticker.Stop()
+    
+    for range ticker.C {
+        servers := p.Servers()
+        fmt.Printf("\n=== Server Status ===\n")
+        
+        for _, srv := range servers {
+            info := srv.ServerInfo()
+            players := srv.Players()
+            
+            fmt.Printf("%s (%s): %d players\n",
+                info.Name(),
+                info.Addr().String(),
+                players.Len(),
+            )
+            
+            // List players on this server
+            players.Range(func(p proxy.Player) bool {
+                fmt.Printf("  - %s\n", p.Username())
+                return true
+            })
+        }
+    }
+}
+
+func handleServerSwitch(player proxy.Player, targetName string, p *proxy.Proxy) error {
+    // Get target server
+    target := p.Server(targetName)
+    if target == nil {
+        return fmt.Errorf("server %s not found", targetName)
+    }
+    
+    // Check current server
+    current := player.CurrentServer()
+    if current != nil && proxy.RegisteredServerEqual(current.Server(), target) {
+        player.SendMessage(&component.Text{
+            Content: "You are already on this server!",
+        })
+        return nil
+    }
+    
+    // Create and execute connection request
+    request := player.CreateConnectionRequest(target)
+    result, err := request.Connect(context.Background())
+    if err != nil {
+        return fmt.Errorf("connection error: %w", err)
+    }
+    
+    if result.Successful() {
+        player.SendMessage(&component.Text{
+            Content: fmt.Sprintf("Connected to %s", targetName),
+        })
+    } else {
+        player.SendMessage(&component.Text{
+            Content: "Failed to connect to server",
+        })
+    }
+    
+    return nil
+}
+```
+
+## See Also
+
+- [Proxy API](/developers/api/proxy) - Main proxy interface  
+- [Player API](/developers/api/player) - Player management
+- [Connection API](/developers/api/connection) - Connection request handling
+- [Events Guide](/developers/events) - Server-related events

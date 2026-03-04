@@ -1,0 +1,475 @@
+---
+title: Docker Compose
+description: Deploy Gate with backend servers using Docker Compose
+---
+
+Docker Compose makes it easy to deploy Gate alongside backend Minecraft servers in a multi-container setup.
+
+## Basic Setup
+
+Here's a complete example that deploys Gate with two backend Minecraft servers:
+
+### docker-compose.yml
+
+```yaml
+version: "3.8"
+
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    container_name: gate
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./config.yml:/config.yml
+
+  server-0:
+    image: itzg/minecraft-server
+    container_name: server-0
+    environment:
+      EULA: "true"
+      TYPE: "PUFFERFISH"
+      ONLINE_MODE: "false"
+    ports:
+      - "25566:25565"
+    volumes:
+      - ./serverdata0:/data
+    restart: unless-stopped
+
+  server-1:
+    image: itzg/minecraft-server
+    container_name: server-1
+    environment:
+      EULA: "true"
+      TYPE: "PUFFERFISH"
+      ONLINE_MODE: "false"
+    ports:
+      - "25567:25565"
+    volumes:
+      - ./serverdata1:/data
+    restart: unless-stopped
+```
+
+### config.yml
+
+```yaml
+config:
+  bind: 0.0.0.0:25565
+  servers:
+    server-0: 0.0.0.0:25566
+    server-1: 0.0.0.0:25567
+  try:
+    - server-0
+    - server-1
+```
+
+### Starting the Stack
+
+```bash
+# Start all services
+docker compose up -d
+
+# View logs
+docker compose logs -f
+
+# View logs for specific service
+docker compose logs -f gate
+
+# Stop all services
+docker compose down
+```
+
+## Bridge Network Setup
+
+For better isolation, use a custom bridge network instead of host networking:
+
+```yaml
+version: "3.8"
+
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    container_name: gate
+    restart: unless-stopped
+    ports:
+      - "25565:25565"
+    volumes:
+      - ./config.yml:/config.yml
+    networks:
+      - minecraft
+    depends_on:
+      - lobby
+      - survival
+
+  lobby:
+    image: itzg/minecraft-server
+    container_name: lobby
+    environment:
+      EULA: "true"
+      TYPE: "PAPER"
+      ONLINE_MODE: "false"
+      SERVER_NAME: "Lobby"
+    volumes:
+      - ./lobby-data:/data
+    networks:
+      - minecraft
+    restart: unless-stopped
+
+  survival:
+    image: itzg/minecraft-server
+    container_name: survival
+    environment:
+      EULA: "true"
+      TYPE: "PAPER"
+      ONLINE_MODE: "false"
+      SERVER_NAME: "Survival"
+    volumes:
+      - ./survival-data:/data
+    networks:
+      - minecraft
+    restart: unless-stopped
+
+networks:
+  minecraft:
+    driver: bridge
+```
+
+### Corresponding config.yml
+
+```yaml
+config:
+  bind: 0.0.0.0:25565
+  onlineMode: true
+  servers:
+    lobby: lobby:25565
+    survival: survival:25565
+  try:
+    - lobby
+  forwarding:
+    mode: legacy
+```
+
+<Note>
+When using bridge networking, backend servers are accessible by their service names (e.g., `lobby:25565`).
+</Note>
+
+## Production Setup with Velocity Forwarding
+
+For production environments, use Velocity modern forwarding for better security:
+
+```yaml
+version: "3.8"
+
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    container_name: gate
+    restart: unless-stopped
+    ports:
+      - "25565:25565"
+    volumes:
+      - ./config.yml:/config.yml
+    environment:
+      - GATE_VELOCITY_SECRET=${VELOCITY_SECRET}
+    networks:
+      - minecraft
+
+  lobby:
+    image: itzg/minecraft-server
+    container_name: lobby
+    environment:
+      EULA: "true"
+      TYPE: "PAPER"
+      ONLINE_MODE: "false"
+      VELOCITY_SECRET: ${VELOCITY_SECRET}
+      ENABLE_VELOCITY_FORWARDING: "true"
+    volumes:
+      - ./lobby-data:/data
+    networks:
+      - minecraft
+    restart: unless-stopped
+
+  survival:
+    image: itzg/minecraft-server
+    container_name: survival
+    environment:
+      EULA: "true"
+      TYPE: "PAPER"
+      ONLINE_MODE: "false"
+      VELOCITY_SECRET: ${VELOCITY_SECRET}
+      ENABLE_VELOCITY_FORWARDING: "true"
+    volumes:
+      - ./survival-data:/data
+    networks:
+      - minecraft
+    restart: unless-stopped
+
+networks:
+  minecraft:
+    driver: bridge
+    internal: true
+```
+
+### .env File
+
+Create a `.env` file in the same directory:
+
+```bash
+VELOCITY_SECRET=your-secret-key-here-make-it-long-and-random
+```
+
+### config.yml for Velocity Forwarding
+
+```yaml
+config:
+  bind: 0.0.0.0:25565
+  onlineMode: true
+  servers:
+    lobby: lobby:25565
+    survival: survival:25565
+  try:
+    - lobby
+  forwarding:
+    mode: velocity
+    # Secret is loaded from GATE_VELOCITY_SECRET environment variable
+```
+
+## Multi-Container Setup with Different Server Types
+
+```yaml
+version: "3.8"
+
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    container_name: gate
+    restart: unless-stopped
+    ports:
+      - "25565:25565"
+    volumes:
+      - ./config.yml:/config.yml
+    networks:
+      - minecraft
+
+  lobby:
+    image: itzg/minecraft-server
+    environment:
+      EULA: "true"
+      TYPE: "PAPER"
+      VERSION: "1.21.4"
+      ONLINE_MODE: "false"
+    volumes:
+      - ./lobby:/data
+    networks:
+      - minecraft
+
+  survival:
+    image: itzg/minecraft-server
+    environment:
+      EULA: "true"
+      TYPE: "PURPUR"
+      VERSION: "1.21.4"
+      ONLINE_MODE: "false"
+    volumes:
+      - ./survival:/data
+    networks:
+      - minecraft
+
+  creative:
+    image: itzg/minecraft-server
+    environment:
+      EULA: "true"
+      TYPE: "FABRIC"
+      VERSION: "1.21.4"
+      ONLINE_MODE: "false"
+    volumes:
+      - ./creative:/data
+    networks:
+      - minecraft
+
+  minigames:
+    image: itzg/minecraft-server
+    environment:
+      EULA: "true"
+      TYPE: "SPIGOT"
+      VERSION: "1.21.4"
+      ONLINE_MODE: "false"
+    volumes:
+      - ./minigames:/data
+    networks:
+      - minecraft
+
+networks:
+  minecraft:
+    driver: bridge
+```
+
+## Setup with Persistent Storage
+
+Use named volumes for better data management:
+
+```yaml
+version: "3.8"
+
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    container_name: gate
+    restart: unless-stopped
+    ports:
+      - "25565:25565"
+    volumes:
+      - ./config.yml:/config.yml
+      - gate-data:/data
+    networks:
+      - minecraft
+
+  lobby:
+    image: itzg/minecraft-server
+    environment:
+      EULA: "true"
+      TYPE: "PAPER"
+      ONLINE_MODE: "false"
+    volumes:
+      - lobby-data:/data
+    networks:
+      - minecraft
+    restart: unless-stopped
+
+  survival:
+    image: itzg/minecraft-server
+    environment:
+      EULA: "true"
+      TYPE: "PAPER"
+      ONLINE_MODE: "false"
+    volumes:
+      - survival-data:/data
+    networks:
+      - minecraft
+    restart: unless-stopped
+
+volumes:
+  gate-data:
+  lobby-data:
+  survival-data:
+
+networks:
+  minecraft:
+    driver: bridge
+```
+
+## Gate Lite Mode with Docker Compose
+
+For lightweight reverse proxy deployments:
+
+```yaml
+version: "3.8"
+
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    container_name: gate
+    restart: unless-stopped
+    ports:
+      - "25565:25565"
+    volumes:
+      - ./config.yml:/config.yml
+    networks:
+      - minecraft
+
+  backend1:
+    image: itzg/minecraft-server
+    environment:
+      EULA: "true"
+      TYPE: "PAPER"
+      ONLINE_MODE: "true"
+      SERVER_NAME: "Server 1"
+    volumes:
+      - ./backend1:/data
+    networks:
+      - minecraft
+
+  backend2:
+    image: itzg/minecraft-server
+    environment:
+      EULA: "true"
+      TYPE: "PAPER"
+      ONLINE_MODE: "true"
+      SERVER_NAME: "Server 2"
+    volumes:
+      - ./backend2:/data
+    networks:
+      - minecraft
+
+networks:
+  minecraft:
+    driver: bridge
+```
+
+### config.yml for Lite Mode
+
+```yaml
+config:
+  bind: 0.0.0.0:25565
+  lite:
+    enabled: true
+    routes:
+      - host: "server1.example.com"
+        backend: backend1:25565
+      - host: "server2.example.com"
+        backend: backend2:25565
+      - host: "*"
+        backend: backend1:25565
+```
+
+## Common Commands
+
+```bash
+# Start services
+docker compose up -d
+
+# Stop services
+docker compose down
+
+# Restart specific service
+docker compose restart gate
+
+# View logs
+docker compose logs -f gate
+
+# Pull latest images
+docker compose pull
+
+# Rebuild and restart
+docker compose up -d --force-recreate
+
+# Remove everything including volumes
+docker compose down -v
+```
+
+## Monitoring and Debugging
+
+```bash
+# Check service status
+docker compose ps
+
+# View resource usage
+docker compose stats
+
+# Execute command in container
+docker compose exec gate sh
+
+# Inspect container
+docker compose inspect gate
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/deployment/docker/configuration">
+    Advanced Docker configuration and networking
+  </Card>
+  <Card title="Production Guide" icon="shield" href="/deployment/production">
+    Best practices for production deployments
+  </Card>
+</CardGroup>

@@ -1,0 +1,364 @@
+---
+title: 'Packets - Protocol Data Types'
+description: 'Learn about Gate packet types, encoding/decoding mechanisms, and how to work with Minecraft protocol packets.'
+---
+
+# Packets
+
+Gate provides a comprehensive packet system for handling Minecraft protocol communication. Every packet implements the `proto.Packet` interface and supports version-aware encoding and decoding.
+
+## Packet Interface
+
+All packets in Gate implement the `proto.Packet` interface:
+
+```go
+type Packet interface {
+    Encode(c *PacketContext, wr io.Writer) error
+    Decode(c *PacketContext, rd io.Reader) error
+}
+```
+
+The `PacketContext` provides protocol version information, packet direction, and state information needed for version-specific handling.
+
+## Common Packet Types
+
+Gate includes packets for all Minecraft protocol states:
+
+### Handshake Packets
+
+The handshake packet initiates the connection:
+
+```go
+type Handshake struct {
+    ProtocolVersion int
+    ServerAddress   string
+    Port            int
+    NextStatus      int  // 1=status, 2=login, 3=transfer
+}
+```
+
+**Example:**
+```go
+import "go.minekube.com/gate/pkg/edition/java/proto/packet"
+
+handshake := &packet.Handshake{
+    ProtocolVersion: 763,  // 1.20.1
+    ServerAddress:   "play.example.com",
+    Port:            25565,
+    NextStatus:      2,  // Login intent
+}
+```
+
+### Keep Alive Packets
+
+Keep alive packets maintain the connection:
+
+```go
+type KeepAlive struct {
+    RandomID int64
+}
+```
+
+The encoding varies by protocol version:
+- **1.12.2+**: int64
+- **1.8-1.12.1**: varint
+- **Before 1.8**: int32
+
+**Example:**
+```go
+keepAlive := &packet.KeepAlive{
+    RandomID: 12345678,
+}
+```
+
+### Chat Packets
+
+Chat messages use different packet structures based on version:
+
+```go
+type LegacyChat struct {
+    Message string
+    Type    MessageType  // 0=chat, 1=system, 2=game_info
+    Sender  uuid.UUID    // 1.16+
+}
+```
+
+**Example:**
+```go
+import "go.minekube.com/gate/pkg/edition/java/proto/packet/chat"
+
+chatPacket := &chat.LegacyChat{
+    Message: "Hello, world!",
+    Type:    chat.ChatMessageType,
+    Sender:  player.ID(),
+}
+```
+
+### Disconnect Packets
+
+Disconnect packets terminate connections with a reason:
+
+```go
+type Disconnect struct {
+    Reason *chat.ComponentHolder  // JSON chat component
+}
+```
+
+**Example:**
+```go
+import (
+    "go.minekube.com/common/minecraft/component"
+    "go.minekube.com/gate/pkg/edition/java/proto/packet"
+)
+
+disconnect := packet.NewDisconnect(
+    &component.Text{Content: "Server is restarting"},
+    protocol,
+    state,
+)
+```
+
+### Join Game Packets
+
+Join game packets are sent when a player joins a world:
+
+```go
+type JoinGame struct {
+    EntityID             int
+    Gamemode             int16
+    Dimension            int
+    PartialHashedSeed    int64  // 1.15+
+    Difficulty           int16
+    Hardcore             bool
+    MaxPlayers           int
+    LevelType            *string              // removed in 1.16+
+    ViewDistance         int                  // 1.14+
+    ReducedDebugInfo     bool
+    ShowRespawnScreen    bool
+    DoLimitedCrafting    bool                 // 1.20.2+
+    LevelNames           []string             // 1.16+
+    Registry             util.CompoundBinaryTag  // 1.16+
+    DimensionInfo        *DimensionInfo       // 1.16+
+    CurrentDimensionData util.CompoundBinaryTag  // 1.16.2+
+    PreviousGamemode     int16                // 1.16+
+    SimulationDistance   int                  // 1.18+
+    LastDeathPosition    *DeathPosition       // 1.19+
+    PortalCooldown       int                  // 1.20+
+    SeaLevel             int                  // 1.21.2+
+    EnforcesSecureChat   bool                 // 1.20.5+
+}
+```
+
+This packet demonstrates version-specific fields that are only encoded/decoded for certain protocol versions.
+
+## Packet Encoding
+
+Packets use protocol-aware encoding utilities from `go.minekube.com/gate/pkg/edition/java/proto/util`:
+
+```go
+func (h *Handshake) Encode(_ *proto.PacketContext, wr io.Writer) error {
+    err := util.WriteVarInt(wr, h.ProtocolVersion)
+    if err != nil {
+        return err
+    }
+    err = util.WriteString(wr, h.ServerAddress)
+    if err != nil {
+        return err
+    }
+    err = util.WriteInt16(wr, int16(h.Port))
+    if err != nil {
+        return err
+    }
+    return util.WriteVarInt(wr, h.NextStatus)
+}
+```
+
+### Common Encoding Functions
+
+| Function | Description |
+|----------|-------------|
+| `util.WriteVarInt(w, int)` | Writes a variable-length integer |
+| `util.WriteString(w, string)` | Writes a length-prefixed UTF-8 string |
+| `util.WriteInt16(w, int16)` | Writes a 16-bit integer |
+| `util.WriteInt32(w, int32)` | Writes a 32-bit integer |
+| `util.WriteInt64(w, int64)` | Writes a 64-bit integer |
+| `util.WriteByte(w, byte)` | Writes a single byte |
+| `util.WriteUUID(w, uuid.UUID)` | Writes a UUID |
+| `util.WriteBytes(w, []byte)` | Writes a byte array |
+
+## Packet Decoding
+
+Decoding mirrors encoding with version-aware logic:
+
+```go
+func (h *Handshake) Decode(_ *proto.PacketContext, rd io.Reader) (err error) {
+    h.ProtocolVersion, err = util.ReadVarInt(rd)
+    if err != nil {
+        return err
+    }
+    h.ServerAddress, err = util.ReadString(rd)
+    if err != nil {
+        return err
+    }
+    port, err := util.ReadInt16(rd)
+    if err != nil {
+        return err
+    }
+    h.Port = int(port)
+    h.NextStatus, err = util.ReadVarInt(rd)
+    return err
+}
+```
+
+### Common Decoding Functions
+
+| Function | Description |
+|----------|-------------|
+| `util.ReadVarInt(r)` | Reads a variable-length integer |
+| `util.ReadString(r)` | Reads a length-prefixed UTF-8 string |
+| `util.ReadStringMax(r, max)` | Reads a string with maximum length |
+| `util.ReadInt16(r)` | Reads a 16-bit integer |
+| `util.ReadInt32(r)` | Reads a 32-bit integer |
+| `util.ReadInt64(r)` | Reads a 64-bit integer |
+| `util.ReadByte(r)` | Reads a single byte |
+| `util.ReadUUID(r)` | Reads a UUID |
+| `io.ReadAll(r)` | Reads remaining bytes |
+
+## Version-Specific Encoding
+
+Packets often need different encoding based on the protocol version:
+
+```go
+func (k *KeepAlive) Encode(c *proto.PacketContext, wr io.Writer) error {
+    if c.Protocol.GreaterEqual(version.Minecraft_1_12_2) {
+        return util.WriteInt64(wr, k.RandomID)
+    } else if c.Protocol.GreaterEqual(version.Minecraft_1_8) {
+        return util.WriteVarInt(wr, int(k.RandomID))
+    }
+    return util.WriteInt32(wr, int32(k.RandomID))
+}
+
+func (k *KeepAlive) Decode(c *proto.PacketContext, rd io.Reader) (err error) {
+    if c.Protocol.GreaterEqual(version.Minecraft_1_12_2) {
+        k.RandomID, err = util.ReadInt64(rd)
+    } else if c.Protocol.GreaterEqual(version.Minecraft_1_8) {
+        var id int
+        id, err = util.ReadVarInt(rd)
+        k.RandomID = int64(id)
+    } else {
+        var id int32
+        id, err = util.ReadInt32(rd)
+        k.RandomID = int64(id)
+    }
+    return
+}
+```
+
+## Packet Interception
+
+You can intercept and modify packets in session handlers:
+
+```go
+type CustomSessionHandler struct {
+    netmc.SessionHandler
+}
+
+func (h *CustomSessionHandler) HandlePacket(pc *proto.PacketContext) {
+    // Check if it's a known packet type
+    if !pc.KnownPacket() {
+        // Forward unknown packets unchanged
+        h.SessionHandler.HandlePacket(pc)
+        return
+    }
+    
+    // Handle specific packet types
+    switch p := pc.Packet.(type) {
+    case *packet.KeepAlive:
+        h.log.Info("Received KeepAlive", "id", p.RandomID)
+        // Forward to default handler
+        h.SessionHandler.HandlePacket(pc)
+        
+    case *chat.LegacyChat:
+        // Modify chat messages
+        if strings.Contains(p.Message, "badword") {
+            p.Message = strings.ReplaceAll(p.Message, "badword", "***")
+        }
+        h.SessionHandler.HandlePacket(pc)
+        
+    case *plugin.Message:
+        h.log.Info("Plugin message", "channel", p.Channel)
+        h.SessionHandler.HandlePacket(pc)
+        
+    default:
+        // Forward all other packets
+        h.SessionHandler.HandlePacket(pc)
+    }
+}
+```
+
+### Intercepting Specific Packets
+
+For backend server packets, extend `backendPlaySessionHandler`:
+
+```go
+import (
+    "go.minekube.com/gate/pkg/edition/java/proto/packet"
+    "go.minekube.com/gate/pkg/gate/proto"
+)
+
+func (b *backendPlaySessionHandler) HandlePacket(pc *proto.PacketContext) {
+    if !pc.KnownPacket() {
+        b.forwardToPlayer(pc, nil)
+        return
+    }
+    
+    switch p := pc.Packet.(type) {
+    case *packet.KeepAlive:
+        // Track keep alive timing
+        b.serverConn.pendingPings.Set(p.RandomID, time.Now())
+        b.forwardToPlayer(pc, nil)
+        
+    case *packet.Disconnect:
+        // Handle disconnection
+        b.handleDisconnect(p)
+        
+    case *plugin.Message:
+        // Handle plugin messages
+        b.handlePluginMessage(p, pc)
+        
+    default:
+        b.forwardToPlayer(pc, nil)
+    }
+}
+```
+
+## Packet Location Reference
+
+Packets are organized by category in:
+
+```
+pkg/edition/java/proto/packet/
+├── handshake.go          # Handshake
+├── disconnect.go         # Disconnect
+├── keep_alive.go         # KeepAlive
+├── joingame.go          # JoinGame
+├── clientsettings.go    # ClientSettings
+├── chat/                # Chat packets
+│   ├── legacy_chat.go
+│   ├── system_chat.go
+│   └── ...
+├── plugin/              # Plugin messages
+│   ├── message.go
+│   └── util.go
+├── bossbar/             # Boss bar packets
+├── tablist/             # Tab list packets
+├── title/               # Title packets
+└── config/              # Configuration packets
+```
+
+## See Also
+
+- [Plugin Channels](/developers/protocol/plugin-channels) - Plugin messaging system
+- [Sound System](/developers/protocol/sound-system) - Sound packet handling
+- [Protocol Documentation](https://wiki.vg/Protocol) - Minecraft protocol reference
+- [pkg.go.dev](https://pkg.go.dev/go.minekube.com/gate/pkg/edition/java/proto/packet) - Complete API documentation

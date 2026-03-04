@@ -1,0 +1,526 @@
+---
+title: Player Events
+description: Handle player connections, authentication, chat, and other player-related events in Gate
+---
+
+Player events allow you to monitor and control all aspects of a player's interaction with the proxy, from initial connection through authentication, gameplay, and disconnection.
+
+## Connection Events
+
+### ConnectionEvent
+
+Fired when a client first connects to the proxy, before any protocol handshake occurs. This is the earliest point where you can interact with or modify the connection.
+
+```go
+type ConnectionEvent struct {
+    conn     net.Conn
+    original ConnectionEventConn
+}
+
+func (e *ConnectionEvent) Connection() net.Conn
+func (e *ConnectionEvent) OriginalConnection() ConnectionEventConn
+func (e *ConnectionEvent) SetConnection(conn net.Conn)
+```
+
+**Example: Connection Logging**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.ConnectionEvent) {
+    conn := e.Connection()
+    log.Info("New connection", "remote", conn.RemoteAddr())
+    
+    // You can wrap the connection for monitoring
+    // wrappedConn := NewMonitoredConnection(conn)
+    // e.SetConnection(wrappedConn)
+})
+```
+
+### ConnectionHandshakeEvent
+
+Fired when a handshake is established between a client and the proxy. This occurs after the initial connection but before login.
+
+```go
+type ConnectionHandshakeEvent struct {
+    inbound Inbound
+    intent  packet.HandshakeIntent
+}
+
+func (e *ConnectionHandshakeEvent) Connection() Inbound
+func (e *ConnectionHandshakeEvent) Intent() packet.HandshakeIntent
+```
+
+**Example: Log Handshake Intent**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.ConnectionHandshakeEvent) {
+    conn := e.Connection()
+    intent := e.Intent()
+    
+    log.Info("Handshake received",
+        "remote", conn.RemoteAddr(),
+        "intent", intent,
+    )
+})
+```
+
+## Authentication Events
+
+### PreLoginEvent
+
+Fired when a player initiates a connection but before authentication with Mojang or before the connection is fully established in offline mode.
+
+```go
+type PreLoginEvent struct {
+    connection Inbound
+    username   string
+    id         uuid.UUID // May be uuid.Nil
+    result     PreLoginResult
+    reason     component.Component
+}
+
+func (e *PreLoginEvent) Username() string
+func (e *PreLoginEvent) ID() (uuid.UUID, bool)
+func (e *PreLoginEvent) Conn() Inbound
+func (e *PreLoginEvent) Result() PreLoginResult
+func (e *PreLoginEvent) Reason() component.Component
+func (e *PreLoginEvent) Deny(reason component.Component)
+func (e *PreLoginEvent) Allow()
+func (e *PreLoginEvent) ForceOnlineMode()
+func (e *PreLoginEvent) ForceOfflineMode()
+```
+
+**PreLoginResult values:**
+- `AllowedPreLogin`: Allow the login to proceed
+- `DeniedPreLogin`: Deny the login
+- `ForceOnlineModePreLogin`: Force online mode authentication
+- `ForceOfflineModePreLogin`: Force offline mode
+
+**Example: Whitelist Implementation**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.PreLoginEvent) {
+    username := e.Username()
+    
+    if !isWhitelisted(username) {
+        e.Deny(&component.Text{
+            Content: "You are not whitelisted on this server.",
+            S: component.Style{
+                Color: component.Red,
+            },
+        })
+        log.Info("Denied non-whitelisted player", "username", username)
+        return
+    }
+    
+    // Check for banned players
+    if isBanned(username) {
+        e.Deny(&component.Text{
+            Content: "You are banned from this server.",
+        })
+        return
+    }
+    
+    e.Allow()
+})
+```
+
+### GameProfileRequestEvent
+
+Fired after `PreLoginEvent` to set up the game profile for the user. This can be used to configure a custom profile, such as for skin replacement.
+
+```go
+type GameProfileRequestEvent struct {
+    inbound    Inbound
+    original   profile.GameProfile
+    onlineMode bool
+    use        profile.GameProfile
+}
+
+func (e *GameProfileRequestEvent) Conn() Inbound
+func (e *GameProfileRequestEvent) Original() profile.GameProfile
+func (e *GameProfileRequestEvent) OnlineMode() bool
+func (e *GameProfileRequestEvent) SetGameProfile(p profile.GameProfile)
+func (e *GameProfileRequestEvent) GameProfile() profile.GameProfile
+```
+
+**Example: Custom Skin System**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.GameProfileRequestEvent) {
+    original := e.Original()
+    
+    // Load custom skin from database
+    customSkin, err := loadPlayerSkin(original.Name)
+    if err != nil {
+        log.Error(err, "Failed to load custom skin", "player", original.Name)
+        return
+    }
+    
+    if customSkin != nil {
+        // Create new profile with custom skin
+        customProfile := profile.GameProfile{
+            Name:       original.Name,
+            ID:         original.ID,
+            Properties: customSkin.Properties,
+        }
+        e.SetGameProfile(customProfile)
+    }
+})
+```
+
+### LoginEvent
+
+Fired when a player attempts to log in. This is your last chance to deny the login before the player enters the proxy.
+
+```go
+type LoginEvent struct {
+    player Player
+    denied bool
+    reason component.Component
+}
+
+func (e *LoginEvent) Player() Player
+func (e *LoginEvent) Deny(reason component.Component)
+func (e *LoginEvent) Allow()
+func (e *LoginEvent) Allowed() bool
+func (e *LoginEvent) Reason() component.Component
+```
+
+**Example: Maintenance Mode**
+
+```go
+var maintenanceMode = true
+
+event.Subscribe(mgr, 0, func(e *proxy.LoginEvent) {
+    player := e.Player()
+    
+    if maintenanceMode {
+        // Allow admins during maintenance
+        if !player.HasPermission("server.maintenance.bypass") {
+            e.Deny(&component.Text{
+                Content: "Server is currently in maintenance mode.\n" +
+                         "Please try again later.",
+                S: component.Style{
+                    Color: component.Yellow,
+                },
+            })
+            return
+        }
+    }
+    
+    e.Allow()
+    log.Info("Player logged in", "username", player.Username())
+})
+```
+
+### PostLoginEvent
+
+Fired after a player has successfully logged in to the proxy but before they are connected to any server.
+
+```go
+type PostLoginEvent struct {
+    player Player
+}
+
+func (e *PostLoginEvent) Player() Player
+```
+
+**Example: Welcome Message**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.PostLoginEvent) {
+    player := e.Player()
+    
+    // Send welcome message
+    player.SendMessage(&component.Text{
+        Content: "Welcome to the server, " + player.Username() + "!",
+        S: component.Style{
+            Color: component.Green,
+        },
+    })
+    
+    // Load player data asynchronously
+    go loadPlayerData(player)
+})
+```
+
+## Disconnect Event
+
+### DisconnectEvent
+
+Fired when a player disconnects from the proxy.
+
+```go
+type DisconnectEvent struct {
+    player      Player
+    loginStatus LoginStatus
+}
+
+func (e *DisconnectEvent) Player() Player
+func (e *DisconnectEvent) LoginStatus() LoginStatus
+```
+
+**LoginStatus values:**
+- `SuccessfulLoginStatus`: Normal disconnect after successful login
+- `ConflictingLoginStatus`: Disconnected due to conflicting login
+- `CanceledByUserLoginStatus`: User canceled the login
+- `CanceledByProxyLoginStatus`: Proxy canceled the login
+- `CanceledByUserBeforeCompleteLoginStatus`: User canceled before completion
+
+**Example: Cleanup and Logging**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.DisconnectEvent) {
+    player := e.Player()
+    status := e.LoginStatus()
+    
+    log.Info("Player disconnected",
+        "username", player.Username(),
+        "status", status,
+    )
+    
+    // Save player data
+    if err := savePlayerData(player); err != nil {
+        log.Error(err, "Failed to save player data", "player", player.Username())
+    }
+    
+    // Cleanup player resources
+    cleanupPlayerResources(player)
+})
+```
+
+## Chat and Command Events
+
+### PlayerChatEvent
+
+Fired when a player sends a chat message. Messages starting with "/" trigger `CommandExecuteEvent` instead.
+
+```go
+type PlayerChatEvent struct {
+    player   Player
+    original string
+    modified string
+    denied   bool
+}
+
+func (c *PlayerChatEvent) Player() Player
+func (c *PlayerChatEvent) Message() string
+func (c *PlayerChatEvent) SetMessage(msg string)
+func (c *PlayerChatEvent) Original() string
+func (c *PlayerChatEvent) SetAllowed(allowed bool)
+func (c *PlayerChatEvent) Allowed() bool
+```
+
+**Example: Chat Filter**
+
+```go
+var badWords = []string{"bad", "words", "here"}
+
+event.Subscribe(mgr, 0, func(e *proxy.PlayerChatEvent) {
+    player := e.Player()
+    message := e.Message()
+    
+    // Filter bad words
+    filtered := message
+    for _, word := range badWords {
+        filtered = strings.ReplaceAll(
+            strings.ToLower(filtered),
+            strings.ToLower(word),
+            "***",
+        )
+    }
+    
+    if filtered != message {
+        e.SetMessage(filtered)
+        log.Info("Filtered chat message", "player", player.Username())
+    }
+})
+```
+
+### CommandExecuteEvent
+
+Fired when someone attempts to execute a command.
+
+```go
+type CommandExecuteEvent struct {
+    source          command.Source
+    commandline     string
+    originalCommand string
+    forward         bool
+    denied          bool
+}
+
+func (c *CommandExecuteEvent) Source() command.Source
+func (c *CommandExecuteEvent) Command() string
+func (c *CommandExecuteEvent) OriginalCommand() string
+func (c *CommandExecuteEvent) SetCommand(commandline string)
+func (c *CommandExecuteEvent) SetAllowed(allowed bool)
+func (c *CommandExecuteEvent) Allowed() bool
+func (c *CommandExecuteEvent) SetForward(forward bool)
+func (c *CommandExecuteEvent) Forward() bool
+```
+
+**Example: Command Logging and Blocking**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.CommandExecuteEvent) {
+    source := e.Source()
+    command := e.Command()
+    
+    log.Info("Command executed",
+        "source", source,
+        "command", command,
+    )
+    
+    // Block certain commands
+    if strings.HasPrefix(command, "op ") || strings.HasPrefix(command, "deop ") {
+        player, ok := source.(proxy.Player)
+        if ok && !player.HasPermission("server.admin") {
+            e.SetAllowed(false)
+            player.SendMessage(&component.Text{
+                Content: "You don't have permission to use this command.",
+                S: component.Style{Color: component.Red},
+            })
+        }
+    }
+})
+```
+
+## Player Settings Event
+
+### PlayerSettingsChangedEvent
+
+Fired when a player's client settings are updated or initialized.
+
+```go
+type PlayerSettingsChangedEvent struct {
+    player   Player
+    settings player.Settings
+}
+
+func (s *PlayerSettingsChangedEvent) Player() Player
+func (s *PlayerSettingsChangedEvent) Settings() player.Settings
+```
+
+**Example: Locale-Based Messages**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.PlayerSettingsChangedEvent) {
+    player := e.Player()
+    settings := e.Settings()
+    
+    log.Info("Player settings updated",
+        "player", player.Username(),
+        "locale", settings.Locale(),
+        "viewDistance", settings.ViewDistance(),
+    )
+    
+    // Send localized welcome message
+    msg := getLocalizedMessage(settings.Locale(), "welcome")
+    player.SendMessage(msg)
+})
+```
+
+## Permission Event
+
+### PermissionsSetupEvent
+
+Fired when a permission subject's permissions are being initialized.
+
+```go
+type PermissionsSetupEvent struct {
+    subject     permission.Subject
+    defaultFunc permission.Func
+    fn          permission.Func
+}
+
+func (p *PermissionsSetupEvent) Subject() permission.Subject
+func (p *PermissionsSetupEvent) Func() permission.Func
+func (p *PermissionsSetupEvent) SetFunc(fn permission.Func)
+```
+
+**Example: Custom Permission System**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.PermissionsSetupEvent) {
+    subject := e.Subject()
+    
+    // Set custom permission function
+    e.SetFunc(func(permission string) permission.TriState {
+        // Check custom permission system
+        if hasPermission(subject, permission) {
+            return permission.True
+        }
+        return permission.False
+    })
+})
+```
+
+## Plugin Message Events
+
+### PlayerChannelRegisterEvent
+
+Fired when a client sends a plugin message through the register channel.
+
+```go
+type PlayerChannelRegisterEvent struct {
+    channels []message.ChannelIdentifier
+    player   Player
+}
+
+func (e *PlayerChannelRegisterEvent) Channels() []message.ChannelIdentifier
+func (e *PlayerChannelRegisterEvent) Player() Player
+```
+
+### PlayerChannelUnregisterEvent
+
+Fired when a client sends a plugin message through the unregister channel.
+
+```go
+type PlayerChannelUnregisterEvent struct {
+    channels []message.ChannelIdentifier
+    player   Player
+}
+
+func (e *PlayerChannelUnregisterEvent) Channels() []message.ChannelIdentifier
+func (e *PlayerChannelUnregisterEvent) Player() Player
+```
+
+### PlayerClientBrandEvent
+
+Fired when a player sends the `minecraft:brand` plugin message.
+
+```go
+type PlayerClientBrandEvent struct {
+    player Player
+    brand  string
+}
+
+func (e *PlayerClientBrandEvent) Player() Player
+func (e *PlayerClientBrandEvent) Brand() string
+```
+
+**Example: Track Client Types**
+
+```go
+event.Subscribe(mgr, 0, func(e *proxy.PlayerClientBrandEvent) {
+    player := e.Player()
+    brand := e.Brand()
+    
+    log.Info("Player client brand",
+        "player", player.Username(),
+        "brand", brand,
+    )
+    
+    // Track modded clients
+    if strings.Contains(strings.ToLower(brand), "forge") {
+        markPlayerAsModded(player)
+    }
+})
+```
+
+## See Also
+
+- [Events Overview](/developers/events/overview)
+- [Lifecycle Events](/developers/events/lifecycle)
+- [Server Events](/developers/events/server-events)

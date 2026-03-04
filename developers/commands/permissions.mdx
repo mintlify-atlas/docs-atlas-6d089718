@@ -1,0 +1,321 @@
+---
+title: "Command Permissions"
+description: "Implement permission checks for commands and control access to proxy features."
+---
+
+# Command Permissions
+
+Gate's permission system allows you to control who can execute commands and access features.
+
+## Permission Interface
+
+The `permission.Subject` interface is implemented by command sources:
+
+```go
+type Subject interface {
+    HasPermission(permission string) bool
+}
+```
+
+Source: `pkg/util/permission/permission.go`
+
+## Basic Permission Checks
+
+### In Command Requirements
+
+Add permission checks when registering commands:
+
+```go
+cmdManager.Register(brigodier.Literal("admin").
+    Requires(command.Requires(func(c *command.RequiresContext) bool {
+        return c.Source.HasPermission("gate.admin")
+    })).
+    Executes(command.Command(func(c *command.Context) error {
+        return c.Source.SendMessage(&component.Text{
+            Content: "Admin command executed",
+        })
+    })),
+)
+```
+
+Source: `pkg/command/command.go:70-78`
+
+### In Command Execution
+
+Check permissions during command execution:
+
+```go
+Executes(command.Command(func(c *command.Context) error {
+    if !c.Source.HasPermission("myplugin.kick") {
+        return c.Source.SendMessage(&component.Text{
+            Content: "You don't have permission to use this command",
+            S: component.Style{Color: color.Red},
+        })
+    }
+    
+    // Command logic
+    return nil
+}))
+```
+
+## Permission Levels
+
+Organize permissions hierarchically:
+
+```go
+// Basic user permissions
+"gate.command.server"        // Use /server
+"gate.command.glist"         // Use /glist
+
+// Moderator permissions
+"gate.mod.kick"              // Kick players
+"gate.mod.mute"              // Mute players
+
+// Admin permissions
+"gate.admin.reload"          // Reload config
+"gate.admin.shutdown"        // Stop proxy
+"gate.admin.*"               // All admin permissions
+```
+
+## Built-in Command Permissions
+
+Gate's built-in commands use these permissions:
+
+| Command | Permission | Configurable |
+|---------|------------|-------------|
+| `/server` | `gate.command.server` | Yes |
+| `/glist` | `gate.command.glist` | Yes |
+| `/send` | `gate.command.send` | Yes |
+
+<Info>
+Enable permission checks for built-in commands with:
+```yaml
+requireBuiltinCommandPermissions: true
+```
+in config.yml
+</Info>
+
+## Permission Checks for Players
+
+Check permissions on player objects:
+
+```go
+player := proxy.Player("username")
+
+if player.HasPermission("myplugin.vip") {
+    // Give VIP benefits
+}
+```
+
+### Console vs Players
+
+Different sources have different permission behavior:
+
+```go
+Executes(command.Command(func(c *command.Context) error {
+    // Console has all permissions by default
+    if _, isPlayer := c.Source.(proxy.Player); !isPlayer {
+        // Source is console
+        // Console can execute any command
+    } else {
+        // Source is player - check permissions
+        if !c.Source.HasPermission("admin.command") {
+            return errors.New("insufficient permissions")
+        }
+    }
+    
+    return nil
+}))
+```
+
+## Implementing Permission Providers
+
+Gate doesn't include a permission management system by default. Implement your own:
+
+### Simple File-based Permissions
+
+```go
+type PermissionManager struct {
+    permissions map[string][]string // username -> permissions
+}
+
+func (pm *PermissionManager) HasPermission(username, permission string) bool {
+    perms, ok := pm.permissions[username]
+    if !ok {
+        return false
+    }
+    
+    for _, perm := range perms {
+        if perm == permission || perm == "*" {
+            return true
+        }
+        
+        // Check wildcard permissions
+        if strings.HasSuffix(perm, ".*") {
+            prefix := strings.TrimSuffix(perm, ".*")
+            if strings.HasPrefix(permission, prefix+".") {
+                return true
+            }
+        }
+    }
+    
+    return false
+}
+```
+
+### Integrating with Players
+
+Wrap player objects to add permission checking:
+
+```go
+type PlayerWithPermissions struct {
+    proxy.Player
+    permManager *PermissionManager
+}
+
+func (p *PlayerWithPermissions) HasPermission(permission string) bool {
+    return p.permManager.HasPermission(p.Username(), permission)
+}
+```
+
+## External Permission Plugins
+
+Integrate with permission plugins on backend servers:
+
+### LuckPerms Integration
+
+Query LuckPerms via plugin messages:
+
+```go
+// Send permission check request
+req := map[string]interface{}{
+    "id": "check-perm",
+    "player": player.UUID(),
+    "permission": "myplugin.admin",
+}
+
+data, _ := json.Marshal(req)
+player.SendPluginMessage("luckperms:api", data)
+
+// Listen for response
+eventMgr.Subscribe(&proxy.PluginMessageEvent{}, 0, 
+    func(e *proxy.PluginMessageEvent) {
+        if e.Identifier == "luckperms:api" {
+            var resp map[string]interface{}
+            json.Unmarshal(e.Data, &resp)
+            
+            if resp["id"] == "check-perm" {
+                hasPermission := resp["result"].(bool)
+                // Use permission result
+            }
+        }
+    },
+)
+```
+
+## Dynamic Permissions
+
+Grant temporary permissions:
+
+```go
+type TemporaryPermission struct {
+    permission string
+    expiresAt  time.Time
+}
+
+type PermissionManager struct {
+    temporary map[string][]TemporaryPermission
+}
+
+func (pm *PermissionManager) GrantTemporary(username, permission string, duration time.Duration) {
+    pm.temporary[username] = append(pm.temporary[username], TemporaryPermission{
+        permission: permission,
+        expiresAt:  time.Now().Add(duration),
+    })
+}
+
+func (pm *PermissionManager) HasPermission(username, permission string) bool {
+    // Check temporary permissions
+    if temps, ok := pm.temporary[username]; ok {
+        for _, temp := range temps {
+            if time.Now().Before(temp.expiresAt) && temp.permission == permission {
+                return true
+            }
+        }
+    }
+    
+    // Check permanent permissions
+    // ...
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Permission Naming">
+    Use a consistent naming scheme:
+    
+    - `plugin.category.action` format
+    - All lowercase with dots as separators
+    - Specific to general: `gate.admin.kick` not `kick.admin.gate`
+    
+    Examples:
+    - `myplugin.command.teleport`
+    - `myplugin.admin.reload`
+    - `myplugin.feature.fly`
+  </Accordion>
+  
+  <Accordion title="Wildcard Permissions">
+    Support wildcard permissions for convenience:
+    
+    - `myplugin.*` - All plugin permissions
+    - `myplugin.admin.*` - All admin permissions
+    - `*` - All permissions (superadmin)
+    
+    But be careful with wildcards in production!
+  </Accordion>
+  
+  <Accordion title="Default Permissions">
+    Some permissions should be granted by default:
+    
+    ```go
+    func (pm *PermissionManager) HasPermission(username, permission string) bool {
+        // Default permissions for all players
+        defaultPerms := []string{
+            "gate.command.server",
+            "gate.command.glist",
+        }
+        
+        for _, perm := range defaultPerms {
+            if perm == permission {
+                return true
+            }
+        }
+        
+        // Check other permissions
+        // ...
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Console Permissions">
+    Always grant console full permissions:
+    
+    ```go
+    if c.Source == proxy.ConsoleCommandSource {
+        return true // Console has all permissions
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Command Examples" icon="code" href="/developers/examples/command-plugin">
+    See complete command with permissions
+  </Card>
+  <Card title="Event System" icon="bell" href="/developers/events/overview">
+    Learn about Gate's event system
+  </Card>
+</CardGroup>

@@ -1,0 +1,361 @@
+---
+title: Docker Installation
+description: Run Gate in Docker containers with docker run, docker-compose, or Podman
+---
+
+Gate provides official Docker images that are optimized for containerized deployments. Choose between the standard image or the JRE variant for Bedrock support.
+
+## Image Variants
+
+Gate offers two Docker image variants to suit different use cases:
+
+<CardGroup cols={2}>
+  <Card title="Standard Image" icon="docker">
+    **`ghcr.io/minekube/gate:latest`**
+    
+    Minimal distroless image for most use cases. Smaller footprint and enhanced security.
+  </Card>
+  <Card title="JRE Variant" icon="java">
+    **`ghcr.io/minekube/gate/jre:latest`**
+    
+    Includes Java Runtime Environment. Required for Bedrock Edition support with Geyser.
+  </Card>
+</CardGroup>
+
+<Note>
+  Use the **JRE variant** (`ghcr.io/minekube/gate/jre:latest`) if you need:
+  - Bedrock Edition support (cross-play with mobile, console, Windows Bedrock)
+  - Gate's managed Geyser mode
+  - Java runtime in your container
+  
+  For all other use cases, use the standard image.
+</Note>
+
+## Version Tags
+
+Gate images support multiple version tags:
+
+- `latest` - Latest stable release (recommended)
+- `0.42.2` - Specific version tags
+- `6d3671c` - Commit SHA tags for edge builds
+
+Every commit to the `main` branch is built and pushed with both `latest` and the commit SHA tag.
+
+## Docker Run
+
+### Basic Usage
+
+Run Gate with default settings:
+
+```bash
+docker run -it --rm ghcr.io/minekube/gate:latest
+```
+
+**Flags explained:**
+- `-it` - Interactive mode with pseudo-TTY (see logs in real-time)
+- `--rm` - Automatically remove container when it exits
+- `-d` - Use instead of `-it` to run in detached mode
+
+### With Configuration File
+
+Mount your custom `config.yml`:
+
+<CodeGroup>
+
+```bash Standard Image
+docker run -it --rm \
+  -v $(pwd)/config.yml:/config.yml \
+  -p 25565:25565 \
+  ghcr.io/minekube/gate:latest
+```
+
+```bash JRE Variant (Bedrock Support)
+docker run -it --rm \
+  -v $(pwd)/config.yml:/config.yml \
+  -p 25565:25565 \
+  -p 19132:19132/udp \
+  ghcr.io/minekube/gate/jre:latest
+```
+
+</CodeGroup>
+
+<Note>
+  The JRE variant example includes UDP port 19132 for Bedrock Edition connections.
+</Note>
+
+Get a complete config file from the [repository](https://github.com/minekube/gate/blob/master/config.yml).
+
+### With Minekube Connect
+
+Integrate with [Minekube Connect](https://connect.minekube.com/) for managed hosting:
+
+<Tabs>
+  <Tab title="Environment Variable">
+    ```bash
+    docker run -it --rm \
+      -v $(pwd)/config.yml:/config.yml \
+      -e CONNECT_TOKEN=your_token_here \
+      ghcr.io/minekube/gate:latest
+    ```
+    
+    <Info>
+      The `CONNECT_TOKEN` environment variable takes precedence over `connect.json` file.
+    </Info>
+  </Tab>
+  
+  <Tab title="Volume Mount">
+    ```bash
+    docker run -it --rm \
+      -v $(pwd)/config.yml:/config.yml \
+      -v $(pwd)/connect.json:/connect.json \
+      ghcr.io/minekube/gate:latest
+    ```
+    
+    Create `connect.json`:
+    ```json
+    { "token": "your_token_here" }
+    ```
+    
+    Gate can auto-generate this file when you enable Connect in the config.
+  </Tab>
+</Tabs>
+
+## Docker Compose
+
+### Basic Setup
+
+Create a `docker-compose.yml` file:
+
+<CodeGroup>
+
+```yaml Standard Image
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    container_name: gate
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./config.yml:/config.yml
+      # - ./connect.json:/connect.json  # Optional: Minekube Connect
+```
+
+```yaml JRE Variant (Bedrock Support)
+services:
+  gate:
+    image: ghcr.io/minekube/gate/jre:latest
+    container_name: gate
+    restart: unless-stopped
+    ports:
+      - "25565:25565"  # Java Edition
+      - "19132:19132/udp"  # Bedrock Edition
+    volumes:
+      - ./config.yml:/config.yml
+```
+
+</CodeGroup>
+
+Start the services:
+
+```bash
+docker-compose up -d
+```
+
+View logs:
+
+```bash
+docker-compose logs -f gate
+```
+
+Stop the services:
+
+```bash
+docker-compose down
+```
+
+### Complete Example with Minecraft Servers
+
+Gate includes a complete example that configures Gate with two Minecraft servers:
+
+<Steps>
+
+<Step title="Clone the repository">
+  ```bash
+  git clone https://github.com/minekube/gate.git
+  cd gate/.examples/docker-compose
+  ```
+</Step>
+
+<Step title="Review the configuration">
+  The example includes:
+  - Gate proxy with network configuration
+  - Two Pufferfish servers (server-0, server-1)
+  - Volume mounts for server data
+  
+  ```yaml docker-compose.yml
+  version: "3.8"
+
+  services:
+    gate:
+      image: ghcr.io/minekube/gate:latest
+      container_name: gate
+      restart: unless-stopped
+      network_mode: host
+      volumes:
+        - ./config.yml:/config.yml
+    server-0:
+      image: itzg/minecraft-server
+      container_name: server-0
+      environment:
+        EULA: "true"
+        TYPE: "PUFFERFISH"
+        ONLINE_MODE: "false"
+      ports:
+        - "25566:25565"
+      volumes:
+        - ./serverdata0:/data
+      restart: unless-stopped
+    server-1:
+      image: itzg/minecraft-server
+      container_name: server-1
+      environment:
+        EULA: "true"
+        TYPE: "PUFFERFISH"
+        ONLINE_MODE: "false"
+      ports:
+        - "25567:25565"
+      volumes:
+        - ./serverdata1:/data
+      restart: unless-stopped
+  ```
+</Step>
+
+<Step title="Start the network">
+  ```bash
+  docker-compose up
+  ```
+</Step>
+
+<Step title="Connect and test">
+  - Join at `localhost:25565`
+  - Use `/server server-0` or `/server server-1` to switch between servers
+  - Server files are in `serverdata0/` and `serverdata1/` directories
+</Step>
+
+</Steps>
+
+## Podman
+
+Gate works seamlessly with Podman as a Docker alternative:
+
+```bash
+podman run -it --rm ghcr.io/minekube/gate:latest
+```
+
+For docker-compose files, use:
+
+```bash
+podman-compose up
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+
+<Accordion title='Error: "denied" when pulling image'>
+  If you see:
+  
+  ```
+  Unable to find image 'ghcr.io/minekube/gate:latest' locally
+  docker: Error response from daemon: Head "https://ghcr.io/v2/minekube/gate/manifests/latest": denied.
+  ```
+  
+  You may be logged in with an expired GitHub token. Solution:
+  
+  ```bash
+  docker logout ghcr.io
+  ```
+  
+  GitHub Container Registry doesn't require authentication for public images. An expired token is worse than no token.
+</Accordion>
+
+<Accordion title="Container exits immediately">
+  Check logs for errors:
+  
+  ```bash
+  docker logs <container_name>
+  ```
+  
+  Common causes:
+  - Invalid configuration file
+  - Port already in use
+  - Missing required volumes
+</Accordion>
+
+<Accordion title="Cannot connect to proxy">
+  Verify:
+  
+  - Ports are correctly mapped (`-p 25565:25565`)
+  - Firewall allows connections
+  - `network_mode: host` is used (easier for beginners) or ports are properly exposed
+  - Container is running: `docker ps`
+</Accordion>
+
+<Accordion title="Configuration changes not taking effect">
+  Restart the container after config changes:
+  
+  ```bash
+  docker-compose restart gate
+  # or
+  docker restart <container_name>
+  ```
+</Accordion>
+
+</AccordionGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use specific version tags" icon="tag">
+    Pin to specific versions in production instead of `latest`:
+    
+    ```yaml
+    image: ghcr.io/minekube/gate:0.42.2
+    ```
+  </Card>
+  
+  <Card title="Mount configuration as read-only" icon="lock">
+    Prevent accidental modifications:
+    
+    ```yaml
+    volumes:
+      - ./config.yml:/config.yml:ro
+    ```
+  </Card>
+  
+  <Card title="Use docker-compose for multi-container setups" icon="layer-group">
+    Manage Gate and backend servers together with defined dependencies and networking.
+  </Card>
+  
+  <Card title="Set resource limits" icon="gauge-high">
+    Control memory and CPU usage:
+    
+    ```yaml
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    ```
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Kubernetes Deployment" icon="dharmachakra" href="/installation/kubernetes">
+    Scale Gate in Kubernetes clusters
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Customize Gate for your network
+  </Card>
+</CardGroup>

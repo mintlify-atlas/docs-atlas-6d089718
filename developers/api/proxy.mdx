@@ -1,0 +1,373 @@
+---
+title: Proxy API
+description: Core proxy interface for Gate server management and player operations
+---
+
+The `Proxy` type is Gate's main Java edition Minecraft proxy interface. It provides methods for managing servers, players, commands, and events.
+
+## Overview
+
+The Proxy is the central component that:
+- Manages backend server registrations
+- Tracks connected players
+- Handles event management
+- Processes commands
+- Controls the proxy lifecycle
+
+Source: `pkg/edition/java/proxy/proxy.go:42`
+
+## Creating a Proxy
+
+Create a new proxy instance with configuration:
+
+```go
+import (
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+    "go.minekube.com/gate/pkg/edition/java/config"
+)
+
+// Create proxy with options
+p, err := proxy.New(proxy.Options{
+    Config:   cfg,        // *config.Config
+    EventMgr: eventMgr,   // event.Manager (optional)
+    Authenticator: nil,   // auth.Authenticator (optional, uses default)
+})
+if err != nil {
+    return err
+}
+```
+
+<ParamField path="Config" type="*config.Config" required>
+  The proxy configuration. Must be validated before passing.
+</ParamField>
+
+<ParamField path="EventMgr" type="event.Manager">
+  Event manager for the proxy. If nil, no events are sent.
+</ParamField>
+
+<ParamField path="Authenticator" type="auth.Authenticator">
+  Custom authenticator for online mode. If nil, uses Mojang's session server.
+</ParamField>
+
+## Starting the Proxy
+
+Start the proxy and begin accepting connections:
+
+```go
+import "context"
+
+// Start blocks until shutdown or error
+if err := p.Start(ctx); err != nil {
+    log.Error(err, "proxy stopped with error")
+}
+// Proxy is already shutdown when Start returns
+```
+
+<ResponseField name="error" type="error">
+  Returns `ErrProxyAlreadyRun` if the proxy was already started, or any initialization/runtime errors.
+</ResponseField>
+
+<Note>
+  A Proxy instance can only be run once. Create a new instance to restart.
+</Note>
+
+## Server Management
+
+### Registering Servers
+
+Register a backend server with the proxy:
+
+```go
+import "go.minekube.com/gate/pkg/util/netutil"
+
+// Parse server address
+addr, err := netutil.Parse("localhost:25566", "tcp")
+if err != nil {
+    return err
+}
+
+// Create server info
+info := proxy.NewServerInfo("lobby", addr)
+
+// Register the server
+registered, err := p.Register(info)
+if err == proxy.ErrServerAlreadyExists {
+    // Server already registered
+    log.Info("server already exists", "name", info.Name())
+} else if err != nil {
+    return err
+}
+```
+
+<ParamField path="info" type="ServerInfo" required>
+  Server information including name and address.
+</ParamField>
+
+<ResponseField name="RegisteredServer" type="RegisteredServer">
+  The registered server instance.
+</ResponseField>
+
+<ResponseField name="error" type="error">
+  Returns `ErrServerAlreadyExists` if a server with the same name already exists.
+</ResponseField>
+
+### Getting Servers
+
+Retrieve registered servers:
+
+```go
+// Get a specific server by name (case-insensitive)
+server := p.Server("lobby")
+if server == nil {
+    log.Info("server not found")
+    return
+}
+
+// Get all registered servers
+allServers := p.Servers()
+for _, srv := range allServers {
+    log.Info("server", "name", srv.ServerInfo().Name())
+}
+```
+
+<ResponseField name="Server" type="RegisteredServer">
+  Returns nil if the server is not found.
+</ResponseField>
+
+### Unregistering Servers
+
+Remove a server from the proxy:
+
+```go
+// Unregister a server
+if p.Unregister(info) {
+    log.Info("server unregistered", "name", info.Name())
+} else {
+    log.Info("server not found")
+}
+```
+
+<ResponseField name="bool" type="bool">
+  Returns true if the server was found and unregistered.
+</ResponseField>
+
+## Player Management
+
+### Getting Players
+
+Retrieve connected players:
+
+```go
+import "go.minekube.com/gate/pkg/util/uuid"
+
+// Get player count
+count := p.PlayerCount()
+log.Info("players online", "count", count)
+
+// Get all players
+players := p.Players()
+for _, player := range players {
+    log.Info("player", "name", player.Username())
+}
+
+// Get player by UUID
+playerID := uuid.Must(uuid.Parse("...")
+player := p.Player(playerID)
+if player == nil {
+    log.Info("player not found")
+}
+
+// Get player by username (case-insensitive)
+player = p.PlayerByName("Notch")
+if player != nil {
+    log.Info("found player", "id", player.ID())
+}
+```
+
+<ResponseField name="Player" type="Player">
+  Returns nil if the player is not found.
+</ResponseField>
+
+### Disconnecting Players
+
+Disconnect all connected players:
+
+```go
+import "go.minekube.com/common/minecraft/component"
+
+// Disconnect all players with a reason
+reason := &component.Text{Content: "Server restarting"}
+p.DisconnectAll(reason)
+```
+
+<ParamField path="reason" type="component.Component">
+  The disconnect reason to display to players.
+</ParamField>
+
+## Event Management
+
+Access the proxy's event manager:
+
+```go
+// Get event manager
+eventMgr := p.Event()
+
+// Subscribe to events
+eventMgr.Subscribe(&proxy.PlayerLoginEvent{}, func(e *proxy.PlayerLoginEvent) {
+    log.Info("player logging in", "name", e.Player().Username())
+})
+```
+
+<ResponseField name="event.Manager" type="event.Manager">
+  The proxy's event manager for subscribing to and firing events.
+</ResponseField>
+
+## Command Management
+
+Access the proxy's command manager:
+
+```go
+import "go.minekube.com/gate/pkg/command"
+
+// Get command manager
+cmdMgr := p.Command()
+
+// Register a command
+cmdMgr.Register("mycommand", &command.SimpleCommand{
+    Invoke: func(ctx *command.Context) error {
+        return ctx.Source.SendMessage(&component.Text{
+            Content: "Hello from custom command!",
+        })
+    },
+})
+```
+
+<ResponseField name="*command.Manager" type="*command.Manager">
+  The proxy's command manager for registering and managing commands.
+</ResponseField>
+
+## Configuration
+
+Access the current proxy configuration:
+
+```go
+// Get current config (read-only copy)
+cfg := p.Config()
+log.Info("proxy bind address", "bind", cfg.Bind)
+```
+
+<ResponseField name="config.Config" type="config.Config">
+  A copy of the current proxy configuration.
+</ResponseField>
+
+## Shutdown
+
+Shutdown the proxy gracefully:
+
+```go
+// Shutdown with a reason
+reason := &component.Text{Content: "Server maintenance"}
+p.Shutdown(reason)
+```
+
+The shutdown process:
+1. Stops listening for new connections
+2. Fires `PreShutdownEvent` allowing modification of disconnect reason
+3. Disconnects all players with the provided reason
+4. Fires `ShutdownEvent` and waits for all event handlers
+5. Cleans up resources
+
+<ParamField path="reason" type="component.Component">
+  The reason to display to players when disconnecting. Pass nil for blank reason.
+</ParamField>
+
+## Lite Mode
+
+Access lite mode functionality:
+
+```go
+// Get lite mode handler
+lite := p.Lite()
+
+// Lite mode is configured in the proxy config
+if p.Config().Lite.Enabled {
+    log.Info("proxy is running in lite mode")
+}
+```
+
+<ResponseField name="*lite.Lite" type="*lite.Lite">
+  The proxy's lite mode functionality handler.
+</ResponseField>
+
+## Plugin Channel Registry
+
+Access the plugin message channel registrar:
+
+```go
+// Get channel registrar
+registrar := p.ChannelRegistrar()
+
+// Register a channel
+registrar.Register(message.MinecraftNamespace("mybrand"))
+```
+
+<ResponseField name="*message.ChannelRegistrar" type="*message.ChannelRegistrar">
+  The channel registrar for plugin messages.
+</ResponseField>
+
+## Complete Example
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    
+    "go.minekube.com/common/minecraft/component"
+    "go.minekube.com/gate/pkg/edition/java/config"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+    "go.minekube.com/gate/pkg/util/netutil"
+)
+
+func main() {
+    // Load and validate config
+    cfg := &config.DefaultConfig
+    cfg.Bind = "0.0.0.0:25565"
+    
+    // Create proxy
+    p, err := proxy.New(proxy.Options{
+        Config: cfg,
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // Register a backend server
+    addr, _ := netutil.Parse("localhost:25566", "tcp")
+    info := proxy.NewServerInfo("lobby", addr)
+    if _, err := p.Register(info); err != nil {
+        log.Printf("Failed to register server: %v", err)
+    }
+    
+    // Subscribe to events
+    p.Event().Subscribe(&proxy.PlayerLoginEvent{}, 
+        func(e *proxy.PlayerLoginEvent) {
+            log.Printf("Player %s is logging in", e.Player().Username())
+        },
+    )
+    
+    // Start proxy (blocks until shutdown)
+    ctx := context.Background()
+    if err := p.Start(ctx); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+## See Also
+
+- [Player API](/developers/api/player) - Working with connected players
+- [Server API](/developers/api/server) - Managing backend servers
+- [Connection API](/developers/api/connection) - Server connection management
+- [Events Guide](/developers/events) - Event system documentation

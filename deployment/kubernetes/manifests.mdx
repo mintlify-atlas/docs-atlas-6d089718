@@ -1,0 +1,506 @@
+---
+title: Kubernetes Manifests
+description: Complete Kubernetes manifest examples for deploying Gate proxy
+---
+
+## Complete Deployment Example
+
+This section provides production-ready Kubernetes manifests for deploying Gate.
+
+### ConfigMap
+
+Store your Gate configuration in a ConfigMap:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gate-config
+  labels:
+    app.kubernetes.io/name: gate
+data:
+  config.yml: |
+    # Gate configuration for Kubernetes
+    config:
+      bind: 0.0.0.0:25565
+      
+      # Backend servers using Kubernetes DNS
+      servers:
+        server-0: server-0.servers:25565
+        server-1: server-1.servers:25565
+      
+      # Try servers in order
+      try:
+        - server-0
+        - server-1
+      
+      # MOTD configuration
+      motd: |
+        &bWelcome to Gate!
+        &7Running on Kubernetes
+      
+      # Player info forwarding
+      playerInfoForwarding:
+        mode: modern
+```
+
+### Deployment
+
+Deploy Gate as a Deployment for easy scaling:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gate
+  labels:
+    app.kubernetes.io/name: gate
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gate
+      app.kubernetes.io/component: proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gate
+        app.kubernetes.io/component: proxy
+    spec:
+      containers:
+        - name: gate
+          image: ghcr.io/minekube/gate:latest
+          imagePullPolicy: IfNotPresent
+          
+          ports:
+            - containerPort: 25565
+              name: minecraft
+              protocol: TCP
+          
+          # Health checks
+          livenessProbe:
+            tcpSocket:
+              port: minecraft
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          readinessProbe:
+            tcpSocket:
+              port: minecraft
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          
+          # Resource limits
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          
+          # Mount configuration
+          volumeMounts:
+            - name: config
+              mountPath: /config.yml
+              subPath: config.yml
+              readOnly: true
+          
+          # Security context
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      
+      # Pod security context
+      securityContext:
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      
+      volumes:
+        - name: config
+          configMap:
+            name: gate-config
+      
+      # Termination grace period
+      terminationGracePeriodSeconds: 30
+```
+
+### Service (NodePort)
+
+Expose Gate using a NodePort service:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: gate
+  labels:
+    app.kubernetes.io/name: gate
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/name: gate
+  ports:
+    - port: 25565
+      targetPort: minecraft
+      protocol: TCP
+      name: minecraft
+      nodePort: 32556  # Optional: specify a fixed port (30000-32767)
+```
+
+### Service (LoadBalancer)
+
+For cloud deployments, use a LoadBalancer:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: gate
+  labels:
+    app.kubernetes.io/name: gate
+  annotations:
+    # AWS-specific annotations
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    
+    # GCP-specific annotations
+    # cloud.google.com/load-balancer-type: "Internal"
+    
+    # Azure-specific annotations
+    # service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/name: gate
+  ports:
+    - port: 25565
+      targetPort: minecraft
+      protocol: TCP
+      name: minecraft
+  # Preserve client IP addresses
+  externalTrafficPolicy: Local
+```
+
+## Backend Server Example
+
+### StatefulSet for Minecraft Servers
+
+Deploy backend Minecraft servers as a StatefulSet:
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: server
+  labels:
+    app.kubernetes.io/name: gate
+    app.kubernetes.io/component: server
+spec:
+  serviceName: servers
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gate
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gate
+        app.kubernetes.io/component: server
+    spec:
+      containers:
+        - name: minecraft-server
+          image: itzg/minecraft-server:latest
+          stdin: true
+          tty: true
+          
+          # Environment variables for server configuration
+          env:
+            - name: TYPE
+              value: "PUFFERFISH"
+            - name: EULA
+              value: "TRUE"
+            - name: ONLINE_MODE
+              value: "FALSE"  # Gate handles authentication
+            - name: MEMORY
+              value: "2G"
+          
+          ports:
+            - containerPort: 25565
+              name: minecraft
+          
+          # Health probes using mc-health
+          livenessProbe:
+            exec:
+              command: ["mc-health"]
+            initialDelaySeconds: 120
+            periodSeconds: 60
+            timeoutSeconds: 10
+            failureThreshold: 3
+          
+          readinessProbe:
+            exec:
+              command: ["mc-health"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1000m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: spigot-config
+              mountPath: /data/spigot.yml
+              subPath: spigot.yml
+              readOnly: false
+      
+      volumes:
+        - name: spigot-config
+          configMap:
+            name: spigot-config
+  
+  # Persistent storage for server data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+```
+
+### Headless Service for Server Discovery
+
+Create a headless service for backend servers:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: servers
+  labels:
+    app.kubernetes.io/name: gate
+    app.kubernetes.io/component: server
+spec:
+  clusterIP: None  # Headless service
+  selector:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: gate
+  ports:
+    - name: minecraft
+      port: 25565
+      targetPort: minecraft
+      protocol: TCP
+```
+
+### Spigot ConfigMap
+
+Configure backend servers for BungeeCord/Velocity mode:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spigot-config
+  labels:
+    app.kubernetes.io/name: gate
+    app.kubernetes.io/component: server
+data:
+  spigot.yml: |
+    settings:
+      bungeecord: true
+```
+
+## Using Kustomize
+
+### Base Kustomization
+
+Create a `kustomization.yaml` file:
+
+```yaml
+resources:
+  - deploy.yaml
+  - svc.yaml
+  - servers/
+
+configMapGenerator:
+  - name: gate-config
+    files:
+      - config.yml
+
+images:
+  - name: gate
+    newName: ghcr.io/minekube/gate
+    newTag: latest
+
+commonLabels:
+  app.kubernetes.io/name: gate
+  app.kubernetes.io/version: "1.0"
+  app.kubernetes.io/managed-by: kustomize
+
+namespace: minecraft
+```
+
+### Environment-Specific Overlays
+
+Create overlays for different environments:
+
+**Production overlay** (`overlays/production/kustomization.yaml`):
+
+```yaml
+namespace: production
+
+bases:
+  - ../../base
+
+replicas:
+  - name: gate
+    count: 3
+
+images:
+  - name: gate
+    newTag: v1.0.0  # Use specific version in production
+
+patches:
+  - patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 2Gi
+    target:
+      kind: Deployment
+      name: gate
+```
+
+**Development overlay** (`overlays/dev/kustomization.yaml`):
+
+```yaml
+namespace: dev
+
+bases:
+  - ../../base
+
+replicas:
+  - name: gate
+    count: 1
+
+images:
+  - name: gate
+    newTag: latest
+```
+
+### Deploy with Kustomize
+
+```bash
+# Development
+kubectl apply -k overlays/dev
+
+# Production
+kubectl apply -k overlays/production
+
+# Preview changes
+kubectl diff -k overlays/production
+```
+
+## Complete Bundle
+
+The Gate repository includes a complete `bundle.yaml` with all resources:
+
+```bash
+# Download and apply
+curl -LO https://raw.githubusercontent.com/minekube/gate/master/.examples/kubernetes/bundle.yaml
+kubectl apply -f bundle.yaml
+
+# Or apply directly
+kubectl apply -f https://raw.githubusercontent.com/minekube/gate/master/.examples/kubernetes/bundle.yaml
+```
+
+## Health Checks
+
+### TCP Socket Probes
+
+For basic health checking:
+
+```yaml
+livenessProbe:
+  tcpSocket:
+    port: minecraft
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  tcpSocket:
+    port: minecraft
+  initialDelaySeconds: 10
+  periodSeconds: 5
+```
+
+### HTTP Probes
+
+If Gate exposes an HTTP health endpoint:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 5
+```
+
+## Environment Variables
+
+Configure Gate using environment variables:
+
+```yaml
+env:
+  # Log level
+  - name: LOG_LEVEL
+    value: "info"
+  
+  # Custom config path
+  - name: CONFIG_PATH
+    value: "/config.yml"
+  
+  # Java options for JRE variant
+  - name: JAVA_OPTS
+    value: "-Xms512M -Xmx1G"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Scaling" icon="chart-line" href="/deployment/kubernetes/scaling">
+    Configure autoscaling and load balancing
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/reference">
+    Explore all configuration options
+  </Card>
+</CardGroup>

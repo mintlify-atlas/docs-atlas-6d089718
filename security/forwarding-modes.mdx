@@ -1,0 +1,537 @@
+---
+title: "Forwarding Modes - Secure Player Info Forwarding"
+description: "Configure Gate's forwarding modes to securely transmit player information to backend servers: legacy, velocity, bungeeguard, and none."
+---
+
+# Forwarding Modes
+
+Forwarding modes determine how Gate transmits player information (IP addresses, UUIDs, and other data) to backend servers. Choosing the right forwarding mode is critical for security and functionality.
+
+## What is Player Info Forwarding?
+
+When Gate proxies connections, backend servers don't directly see the player's real IP address or authenticated UUID. Forwarding modes solve this by securely transmitting this information from Gate to backend servers.
+
+<Note>
+Without proper forwarding, backend servers see all connections coming from Gate's IP address, breaking IP-based security, geolocation, and player identification.
+</Note>
+
+## Available Forwarding Modes
+
+Gate supports four forwarding modes:
+
+| Mode | Security | Version Support | Setup Complexity | Recommended |
+|------|----------|-----------------|------------------|-------------|
+| **velocity** | 🔒 High | 1.13+ | Medium | ✅ Yes |
+| **bungeeguard** | 🔒 High | 1.7-1.12.2 | Medium | ✅ Yes (legacy) |
+| **legacy** | ⚠️ Low | All | Easy | ⚠️ Not recommended |
+| **none** | ❌ None | All | None | ❌ Development only |
+
+## Configuration
+
+Forwarding mode is configured in your `config.yml`:
+
+```yaml
+config:
+  forwarding:
+    # Options: legacy, none, bungeeguard, velocity
+    mode: velocity
+    # Secret for velocity mode
+    velocitySecret: your-secret-here
+    # Secret for bungeeguard mode
+    bungeeGuardSecret: your-secret-here
+```
+
+## Velocity Mode (Recommended)
+
+<Note>
+**Velocity mode is the most secure forwarding method for Minecraft 1.13+**
+</Note>
+
+### Features
+
+- ✅ Cryptographically secure forwarding
+- ✅ Uses HMAC-SHA256 authentication
+- ✅ Prevents IP spoofing attacks
+- ✅ Modern standard supported by Paper, Velocity, etc.
+- ✅ No plaintext secrets in forwarded data
+
+### Gate Configuration
+
+```yaml
+config:
+  forwarding:
+    mode: velocity
+    # Generate a secure random secret
+    velocitySecret: "your-super-secret-key-min-32-chars"
+```
+
+<Warning>
+The velocity secret must be at least 32 characters long and should be cryptographically random.
+</Warning>
+
+**Generate a secure secret:**
+
+```bash
+# Linux/macOS
+openssl rand -base64 32
+
+# Or use uuidgen multiple times
+echo "$(uuidgen)$(uuidgen)" | tr -d '-'
+```
+
+**Using environment variables:**
+
+```yaml
+config:
+  forwarding:
+    mode: velocity
+    # Can be set via GATE_VELOCITY_SECRET environment variable
+```
+
+```bash
+export GATE_VELOCITY_SECRET="your-super-secret-key-min-32-chars"
+```
+
+### Backend Server Configuration
+
+#### Paper/Spigot (1.13+)
+
+**Using Paper's Velocity support:**
+
+1. Edit `config/paper-global.yml` (Paper 1.19+) or `paper.yml` (older versions):
+
+```yaml
+proxies:
+  velocity:
+    enabled: true
+    online-mode: true
+    secret: "your-super-secret-key-min-32-chars"
+```
+
+2. Set `server.properties`:
+
+```properties
+online-mode=false
+```
+
+3. Restart the server
+
+<Note>
+The secret must match exactly between Gate and all backend servers.
+</Note>
+
+#### Using Plugins
+
+For servers without native Velocity support, use:
+
+- **[VelocityLoginFix](https://www.spigotmc.org/resources/velocityloginfix.88731/)** - For older Paper versions
+- **[FabricProxy-Lite](https://modrinth.com/mod/fabricproxy-lite)** - For Fabric servers
+
+### Security Best Practices
+
+1. **Use strong secrets**: Minimum 32 characters, cryptographically random
+2. **Keep secrets private**: Never commit secrets to version control
+3. **Rotate secrets**: Change secrets periodically
+4. **Unique secrets**: Use different secrets for different networks
+5. **Secure storage**: Use environment variables or secret management
+
+## BungeeGuard Mode
+
+<Note>
+**BungeeGuard mode is recommended for Minecraft 1.7-1.12.2 servers that cannot use Velocity mode.**
+</Note>
+
+### Features
+
+- ✅ Token-based authentication
+- ✅ Prevents unauthorized connections
+- ✅ Works with older Minecraft versions
+- ⚠️ Less secure than Velocity mode
+
+### Gate Configuration
+
+```yaml
+config:
+  forwarding:
+    mode: bungeeguard
+    # Generate a secure token
+    bungeeGuardSecret: "your-bungeeguard-token-here"
+```
+
+**Using environment variables:**
+
+```bash
+export GATE_BUNGEEGUARD_SECRET="your-bungeeguard-token-here"
+```
+
+### Backend Server Configuration
+
+1. **Install BungeeGuard plugin** on backend servers:
+   - Download: [BungeeGuard on SpigotMC](https://www.spigotmc.org/resources/bungeeguard.79601/)
+
+2. **Configure** `plugins/BungeeGuard/config.yml`:
+
+```yaml
+allowed-tokens:
+  - "your-bungeeguard-token-here"
+```
+
+3. **Set** `server.properties`:
+
+```properties
+online-mode=false
+```
+
+4. Restart the server
+
+<Warning>
+BungeeGuard tokens must match exactly between Gate and all backend servers.
+</Warning>
+
+## Legacy Mode
+
+<Warning>
+**Legacy mode is insecure and should only be used for testing or legacy compatibility.**
+</Warning>
+
+### About Legacy Mode
+
+- ⚠️ BungeeCord's IP forwarding format
+- ⚠️ No authentication or encryption
+- ⚠️ Vulnerable to IP spoofing
+- ⚠️ Anyone can forge player data
+- ✅ Works with all Minecraft versions
+- ✅ Widely supported
+
+### Gate Configuration
+
+```yaml
+config:
+  forwarding:
+    mode: legacy
+```
+
+### Backend Server Configuration
+
+#### Paper/Spigot
+
+**Edit `spigot.yml`:**
+
+```yaml
+settings:
+  bungeecord: true
+```
+
+**Set `server.properties`:**
+
+```properties
+online-mode=false
+```
+
+### Security Risks
+
+<Warning>
+Legacy mode transmits player information in plaintext without authentication:
+</Warning>
+
+1. **IP Spoofing**: Attackers can forge any IP address
+2. **UUID Manipulation**: Fake player identities
+3. **Bypass Security**: Circumvent bans and whitelist
+4. **Privilege Escalation**: Impersonate admins/operators
+
+### Mitigation
+
+If you must use legacy mode:
+
+1. **Firewall backend servers**: Only allow connections from Gate's IP
+2. **Private network**: Use internal network interfaces
+3. **VPN/tunnel**: Encrypt connections between Gate and backends
+4. **Monitor connections**: Log and alert on suspicious activity
+
+**Example firewall rule (iptables):**
+
+```bash
+# Only allow Minecraft port from Gate IP
+iptables -A INPUT -p tcp --dport 25565 -s GATE_IP_ADDRESS -j ACCEPT
+iptables -A INPUT -p tcp --dport 25565 -j DROP
+```
+
+## None Mode
+
+<Warning>
+**None mode disables all player info forwarding. Backend servers receive no player information.**
+</Warning>
+
+### Gate Configuration
+
+```yaml
+config:
+  forwarding:
+    mode: none
+```
+
+### When to Use
+
+- ❌ **Never in production**
+- ✅ Local development
+- ✅ Single-player testing
+- ✅ Debugging connection issues
+
+### Behavior
+
+- Backend servers see Gate's IP address for all players
+- Players have offline-mode UUIDs
+- No player IP forwarding
+- All security checks fail
+
+<Note>
+With `mode: none`, backend servers cannot distinguish between different players and will see all connections as coming from the proxy.
+</Note>
+
+## Comparison Matrix
+
+### Security Comparison
+
+| Feature | Velocity | BungeeGuard | Legacy | None |
+|---------|----------|-------------|--------|------|
+| Authentication | ✅ HMAC-SHA256 | ✅ Token | ❌ None | ❌ None |
+| IP Spoofing Protection | ✅ Yes | ✅ Yes | ❌ No | ❌ No |
+| UUID Protection | ✅ Yes | ✅ Yes | ❌ No | ❌ No |
+| Encrypted | ✅ Yes | ⚠️ Token only | ❌ No | ❌ No |
+| Modern Standard | ✅ Yes | ⚠️ Plugin | ❌ Legacy | ❌ N/A |
+
+### Compatibility Comparison
+
+| Version | Velocity | BungeeGuard | Legacy | None |
+|---------|----------|-------------|--------|------|
+| 1.7-1.12.2 | ❌ No | ✅ Yes | ✅ Yes | ✅ Yes |
+| 1.13-1.19.3 | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| 1.19.4+ | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| Paper | ✅ Native | ⚠️ Plugin | ✅ Native | ✅ N/A |
+| Spigot | ⚠️ Plugin | ⚠️ Plugin | ✅ Native | ✅ N/A |
+| Fabric | ⚠️ Mod | ⚠️ Mod | ⚠️ Mod | ✅ N/A |
+
+## Choosing the Right Mode
+
+### Decision Tree
+
+```
+Is this production?
+├─ Yes
+│  ├─ Is backend 1.13+?
+│  │  ├─ Yes → Use Velocity Mode ✅
+│  │  └─ No → Use BungeeGuard Mode ✅
+│  └─ Is backend <1.13?
+│     └─ Use BungeeGuard Mode ✅
+└─ No (Development/Testing)
+   └─ Use None or Legacy Mode ⚠️
+```
+
+### Recommendations by Use Case
+
+#### Production Server (Modern)
+```yaml
+config:
+  forwarding:
+    mode: velocity
+    velocitySecret: "secure-random-32-char-secret"
+```
+
+#### Production Server (Legacy 1.7-1.12.2)
+```yaml
+config:
+  forwarding:
+    mode: bungeeguard
+    bungeeGuardSecret: "secure-bungeeguard-token"
+```
+
+#### Development/Testing
+```yaml
+config:
+  forwarding:
+    mode: none
+```
+
+#### Legacy Network (Must migrate)
+```yaml
+config:
+  forwarding:
+    mode: legacy
+  # TODO: Migrate to velocity/bungeeguard
+```
+
+## Firewall Configuration
+
+<Warning>
+**Always protect backend servers with firewall rules, regardless of forwarding mode.**
+</Warning>
+
+### iptables (Linux)
+
+```bash
+#!/bin/bash
+# Allow only Gate proxy IP to connect to backend
+
+GATE_IP="10.0.0.100"  # Your Gate server IP
+MC_PORT="25565"        # Minecraft port
+
+# Clear existing rules for Minecraft port
+iptables -D INPUT -p tcp --dport $MC_PORT -j DROP 2>/dev/null
+iptables -D INPUT -p tcp --dport $MC_PORT -s $GATE_IP -j ACCEPT 2>/dev/null
+
+# Add new rules
+iptables -I INPUT -p tcp --dport $MC_PORT -s $GATE_IP -j ACCEPT
+iptables -A INPUT -p tcp --dport $MC_PORT -j DROP
+
+# Save rules
+iptables-save > /etc/iptables/rules.v4
+```
+
+### ufw (Ubuntu/Debian)
+
+```bash
+# Allow only Gate IP
+sudo ufw allow from 10.0.0.100 to any port 25565 proto tcp
+sudo ufw deny 25565/tcp
+sudo ufw reload
+```
+
+### Docker/Kubernetes
+
+Bind backend servers to internal networks only:
+
+**docker-compose.yml:**
+```yaml
+services:
+  backend:
+    ports:
+      # Only expose on internal network
+      - "127.0.0.1:25565:25565"
+    networks:
+      - internal
+
+networks:
+  internal:
+    internal: true  # No external access
+```
+
+## Migration Guide
+
+### Migrating from Legacy to Velocity
+
+<Note>
+**Migrating to Velocity mode improves security without affecting player data.**
+</Note>
+
+**Steps:**
+
+1. **Generate velocity secret:**
+   ```bash
+   openssl rand -base64 32
+   ```
+
+2. **Update Gate config:**
+   ```yaml
+   config:
+     forwarding:
+       mode: velocity
+       velocitySecret: "your-generated-secret"
+   ```
+
+3. **Update each backend server:**
+   - Paper: Update `paper-global.yml`
+   - Spigot: Install VelocityLoginFix plugin
+
+4. **Test with one backend:**
+   - Try connecting and verify player IP/UUID
+   - Check console for errors
+
+5. **Roll out to all backends:**
+   - Update remaining servers
+   - Restart all servers
+
+6. **Verify:**
+   ```bash
+   # Check player IPs are preserved
+   # Check UUIDs match Mojang
+   # Test ban systems still work
+   ```
+
+### Migrating from BungeeCord
+
+If migrating from BungeeCord to Gate:
+
+1. **Keep forwarding mode** initially:
+   ```yaml
+   config:
+     forwarding:
+       mode: legacy  # Same as BungeeCord
+   ```
+
+2. **Test Gate** with legacy mode first
+
+3. **Then migrate** to velocity mode using steps above
+
+## Troubleshooting
+
+### Players Have Wrong IPs
+
+**Symptoms**: All players show Gate's IP address
+
+**Causes**:
+- Forwarding mode is `none`
+- Backend server not configured for forwarding
+- Firewall blocking forwarded data
+
+**Solutions**:
+1. Verify Gate forwarding mode is not `none`
+2. Check backend server configuration
+3. Ensure secrets match exactly
+
+### "Unable to Verify Username" Errors
+
+**Symptoms**: Players can't connect, authentication fails
+
+**Causes**:
+- Secret mismatch between Gate and backend
+- Backend server in online mode
+- Velocity/BungeeGuard not installed
+
+**Solutions**:
+1. Verify secrets match exactly (check for whitespace)
+2. Set backend `online-mode=false`
+3. Install required plugin/mod on backend
+
+### Players Can Bypass Proxy
+
+**Symptoms**: Players connect directly to backend servers
+
+**Causes**:
+- Backend servers exposed to internet
+- No firewall rules
+- Using legacy mode without protection
+
+**Solutions**:
+1. Configure firewall to only allow Gate IP
+2. Bind backends to internal interfaces only
+3. Upgrade to velocity or bungeeguard mode
+
+### Invalid Token Errors
+
+**Symptoms**: "Invalid token" or "Authentication failed"
+
+**Causes** (BungeeGuard):
+- Token mismatch
+- Token not configured in BungeeGuard
+- BungeeGuard plugin not loaded
+
+**Solutions**:
+1. Check token matches exactly
+2. Verify BungeeGuard plugin is installed and enabled
+3. Check BungeeGuard logs for errors
+
+## Related Topics
+
+- [Online Mode](/security/online-mode) - Mojang authentication
+- [Proxy Protocol](/security/proxy-protocol) - HAProxy protocol support
+- [Backend Server Setup](/guide/backend-servers) - Configure backend servers

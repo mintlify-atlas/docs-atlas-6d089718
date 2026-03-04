@@ -1,0 +1,405 @@
+---
+title: Metrics Collection
+description: Monitor Gate proxy performance with OpenTelemetry metrics, Prometheus integration, and custom dashboards
+---
+
+# Metrics Collection
+
+Gate exposes operational metrics through OpenTelemetry, providing insights into proxy performance, player connections, and server health. Metrics can be exported to Prometheus, Grafana Cloud, or any OpenTelemetry-compatible backend.
+
+## Enabling Metrics
+
+Metrics collection is disabled by default. Enable it using the `OTEL_METRICS_ENABLED` environment variable:
+
+```bash
+export OTEL_METRICS_ENABLED="true"
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+export OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
+
+gate
+```
+
+## Available Metrics
+
+Gate exposes the following metrics (defined in `pkg/edition/java/proxy/otel_meter.go:17`):
+
+### Proxy Metrics
+
+#### `gate.player_count`
+- **Type**: Gauge (Int64)
+- **Description**: Current total player count on the proxy
+- **Unit**: `1` (players)
+- **Labels**: Automatically includes `service.name`, `service.version`
+
+```promql
+# Current player count
+gate_player_count{service_name="gate-proxy"}
+
+# Average players over 5 minutes
+avg_over_time(gate_player_count[5m])
+
+# Peak player count in the last hour
+max_over_time(gate_player_count[1h])
+```
+
+#### `gate.registered_servers`
+- **Type**: Gauge (Int64)
+- **Description**: Current total registered servers on the proxy
+- **Unit**: `1` (servers)
+- **Labels**: Automatically includes `service.name`, `service.version`
+
+```promql
+# Current server count
+gate_registered_servers{service_name="gate-proxy"}
+
+# Server count changes over time
+rate(gate_registered_servers[5m])
+```
+
+### Runtime Metrics
+
+Gate automatically includes Go runtime metrics through the OpenTelemetry SDK:
+
+- **`process.runtime.go.mem.heap_alloc`** - Heap memory allocated
+- **`process.runtime.go.mem.heap_inuse`** - Heap memory in use
+- **`process.runtime.go.gc.count`** - Number of garbage collections
+- **`process.runtime.go.gc.pause_ns`** - GC pause time
+- **`process.runtime.go.goroutines`** - Number of goroutines
+
+### Host Metrics
+
+When using the `honeycombio/otel-config-go` library, Gate includes host-level metrics:
+
+- **CPU usage** - `system.cpu.utilization`
+- **Memory usage** - `system.memory.usage`, `system.memory.utilization`
+- **Network I/O** - `system.network.io`
+- **Disk I/O** - `system.disk.io`
+
+## Metric Export Formats
+
+### OTLP (Recommended)
+
+Export metrics using OpenTelemetry Protocol to a collector or backend:
+
+```bash
+export OTEL_METRICS_ENABLED="true"
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318"
+export OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
+export OTEL_EXPORTER_OTLP_METRICS_PERIOD="30s"  # Export every 30 seconds
+```
+
+### Prometheus Remote Write
+
+The OpenTelemetry Collector can convert OTLP metrics to Prometheus format:
+
+```yaml
+# otel-collector-config.yaml
+exporters:
+  prometheusremotewrite:
+    endpoint: 'http://prometheus:9090/api/v1/write'
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheusremotewrite]
+```
+
+## Prometheus Integration
+
+### Setup with OpenTelemetry Collector
+
+1. **Configure Gate to send metrics to the collector**:
+
+```bash
+export OTEL_METRICS_ENABLED="true"
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318"
+export OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
+```
+
+2. **Configure the collector to export to Prometheus**:
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    send_batch_size: 10000
+    timeout: 10s
+
+exporters:
+  prometheusremotewrite:
+    endpoint: 'http://prometheus:9090/api/v1/write'
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheusremotewrite]
+```
+
+3. **Enable Prometheus remote write receiver**:
+
+```yaml
+# prometheus.yml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+```
+
+Start Prometheus with the remote write receiver flag:
+
+```bash
+prometheus --config.file=prometheus.yml --web.enable-remote-write-receiver
+```
+
+### Metric Name Translation
+
+When metrics are exported to Prometheus:
+
+- OpenTelemetry `service.name` → Prometheus `job` label
+- OpenTelemetry `service.instance.id` → Prometheus `instance` label
+- Metric names keep their original format (e.g., `gate.player_count`)
+
+## Grafana Dashboards
+
+### Basic Player Monitoring
+
+```json
+{
+  "title": "Gate Player Statistics",
+  "panels": [
+    {
+      "title": "Current Player Count",
+      "targets": [
+        {
+          "expr": "gate_player_count{job=\"gate-proxy\"}"
+        }
+      ]
+    },
+    {
+      "title": "Player Count Over Time",
+      "targets": [
+        {
+          "expr": "avg_over_time(gate_player_count{job=\"gate-proxy\"}[5m])"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Advanced Proxy Metrics
+
+```promql
+# Server availability rate
+count(gate_registered_servers{job="gate-proxy"}) / count(gate_registered_servers{job="gate-proxy"} offset 5m)
+
+# Player growth rate
+rate(gate_player_count{job="gate-proxy"}[5m])
+
+# Memory usage trend
+rate(process_runtime_go_mem_heap_alloc{job="gate-proxy"}[5m])
+
+# Goroutine count (indicator of connection handling)
+process_runtime_go_goroutines{job="gate-proxy"}
+```
+
+## Configuration Examples
+
+### Local Development
+
+```bash
+export OTEL_SERVICE_NAME="gate-dev"
+export OTEL_METRICS_ENABLED="true"
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+export OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
+export OTEL_EXPORTER_OTLP_METRICS_PERIOD="10s"  # Faster updates for development
+```
+
+### Production with Grafana Cloud
+
+```bash
+export OTEL_SERVICE_NAME="gate-proxy-prod"
+export OTEL_METRICS_ENABLED="true"
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://prometheus-prod-XX-prod-XX-XXXXX.grafana.net/api/prom/push"
+export OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
+export OTEL_EXPORTER_OTLP_METRICS_HEADERS="Authorization=Basic <base64_credentials>"
+export OTEL_EXPORTER_OTLP_METRICS_PERIOD="60s"
+export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production,cloud.region=us-east-1"
+```
+
+### Self-Hosted Stack
+
+```bash
+export OTEL_SERVICE_NAME="gate-proxy"
+export OTEL_METRICS_ENABLED="true"
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318"
+export OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
+export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=staging,service.instance.id=${HOSTNAME}"
+```
+
+## Docker Compose Example
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    environment:
+      - OTEL_SERVICE_NAME=gate-proxy
+      - OTEL_METRICS_ENABLED=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=docker,service.instance.id=gate-1
+    networks:
+      - observability
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4318:4318"  # OTLP HTTP
+    networks:
+      - observability
+
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--web.enable-remote-write-receiver'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - observability
+
+networks:
+  observability:
+```
+
+## Alerting Rules
+
+Example Prometheus alerting rules for Gate:
+
+```yaml
+# alerts.yml
+groups:
+  - name: gate_alerts
+    interval: 30s
+    rules:
+      - alert: HighPlayerCount
+        expr: gate_player_count > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High player count on {{ $labels.service_name }}"
+          description: "Player count is {{ $value }} (threshold: 1000)"
+
+      - alert: NoRegisteredServers
+        expr: gate_registered_servers == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No servers registered on {{ $labels.service_name }}"
+          description: "Gate proxy has no backend servers available"
+
+      - alert: HighMemoryUsage
+        expr: process_runtime_go_mem_heap_alloc > 1e9  # 1GB
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.service_name }}"
+          description: "Heap allocation is {{ $value | humanize }}B"
+```
+
+## Custom Metrics
+
+To add custom metrics in your Gate plugins or extensions:
+
+```go
+import (
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/metric"
+)
+
+var meter = otel.Meter("my-plugin")
+
+func initMetrics() error {
+    counter, err := meter.Int64Counter(
+        "my_plugin.events",
+        metric.WithDescription("Number of events processed"),
+        metric.WithUnit("1"),
+    )
+    if err != nil {
+        return err
+    }
+    
+    // Use the counter
+    counter.Add(ctx, 1, metric.WithAttributes(
+        attribute.String("event.type", "player_join"),
+    ))
+    
+    return nil
+}
+```
+
+## Troubleshooting
+
+### Metrics Not Appearing
+
+1. Verify metrics are enabled:
+   ```bash
+   echo $OTEL_METRICS_ENABLED
+   ```
+
+2. Check the metrics endpoint:
+   ```bash
+   curl -X POST http://localhost:4318/v1/metrics \
+     -H "Content-Type: application/x-protobuf"
+   ```
+
+3. Review OpenTelemetry Collector logs:
+   ```bash
+   docker logs otel-collector
+   ```
+
+### High Cardinality Issues
+
+- Avoid adding high-cardinality labels (e.g., player UUIDs, timestamps)
+- Use resource attributes for static metadata
+- Consider sampling for high-volume metrics
+
+### Performance Impact
+
+- Metrics collection has minimal overhead (less than 1% CPU)
+- Adjust `OTEL_EXPORTER_OTLP_METRICS_PERIOD` to balance freshness vs. load
+- Use batching in the OpenTelemetry Collector
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Tracing" icon="route" href="/deployment/observability/tracing">
+    Set up distributed tracing for request flows
+  </Card>
+  <Card title="Logging" icon="file-lines" href="/deployment/observability/logging">
+    Configure structured logging and log aggregation
+  </Card>
+</CardGroup>

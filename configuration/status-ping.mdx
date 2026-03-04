@@ -1,0 +1,562 @@
+---
+title: Status Ping Configuration
+description: Customize server list appearance with MOTD, favicon, player count, and ping response settings
+---
+
+# Status Ping Configuration
+
+The `status` section controls how your Gate proxy appears in the Minecraft server list when players ping it. Configure the MOTD (Message of the Day), favicon, max players display, and more.
+
+## Overview
+
+When players add your server to their multiplayer list, Minecraft sends a status ping request. Gate responds with information like:
+
+- Server name/description (MOTD)
+- Player count (online/max)
+- Server version
+- Server icon (favicon)
+- Sample player names
+
+<Frame>
+  <img src="/images/server-list-example.png" alt="Minecraft server list showing MOTD and favicon" />
+</Frame>
+
+## Configuration
+
+<ParamField path="config.status" type="object">
+  Configure the server list ping response
+  
+  ```yaml
+  status:
+    motd: |
+      §bWelcome to My Server
+      §fPowered by Gate
+    showMaxPlayers: 1000
+    favicon: server-icon.png
+    logPingRequests: false
+  ```
+</ParamField>
+
+## MOTD (Message of the Day)
+
+<ParamField path="config.status.motd" type="string" required>
+  The server description shown in the multiplayer server list. Supports both legacy color codes and modern JSON text components.
+  
+  ```yaml
+  status:
+    motd: |
+      §bA Gate Proxy
+      §bVisit ➞ §fgithub.com/minekube/gate
+  ```
+</ParamField>
+
+### Legacy Color Codes
+
+Use `§` (section sign) followed by a color/format code:
+
+<CodeGroup>
+```yaml Simple
+status:
+  motd: |
+    §b§lMY MINECRAFT SERVER
+    §fJoin us for epic adventures!
+```
+
+```yaml Colorful
+status:
+  motd: |
+    §6§lWelcome to §c§lFIRE§6§lNET
+    §e⭐ §fSurvival §7| §fCreative §7| §fMinigames §e⭐
+```
+
+```yaml With Symbols
+status:
+  motd: |
+    §3◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆
+    §b»  §f§lSKYBLOCK SERVER  §b«
+```
+</CodeGroup>
+
+#### Color Codes
+
+| Code | Color        | Code | Color        |
+| ---- | ------------ | ---- | ------------ |
+| `§0` | Black        | `§8` | Dark Gray    |
+| `§1` | Dark Blue    | `§9` | Blue         |
+| `§2` | Dark Green   | `§a` | Green        |
+| `§3` | Dark Aqua    | `§b` | Aqua         |
+| `§4` | Dark Red     | `§c` | Red          |
+| `§5` | Dark Purple  | `§d` | Light Purple |
+| `§6` | Gold         | `§e` | Yellow       |
+| `§7` | Gray         | `§f` | White        |
+
+#### Format Codes
+
+| Code | Format          | Code | Format        |
+| ---- | --------------- | ---- | ------------- |
+| `§l` | Bold            | `§o` | Italic        |
+| `§m` | Strikethrough   | `§n` | Underline     |
+| `§k` | Obfuscated      | `§r` | Reset         |
+
+### JSON Text Components
+
+For advanced formatting, use JSON text components:
+
+<CodeGroup>
+```yaml Basic JSON
+status:
+  motd: |
+    {"text":"Welcome to My Server","color":"aqua","bold":true}
+```
+
+```yaml Multi-line JSON
+status:
+  motd: |
+    {"text":""}
+```
+
+```yaml Complex JSON
+status:
+  motd: '{
+    "text":"MY NETWORK",
+    "color":"gold",
+    "bold":true,
+    "extra":[
+      {"text":"\n"},
+      {"text":"⚡ ","color":"yellow"},
+      {"text":"Online ","color":"white"},
+      {"text":"1.8-1.20","color":"gray"},
+      {"text":" ⚡","color":"yellow"}
+    ]
+  }'
+```
+</CodeGroup>
+
+<Tip>
+  JSON text components give you more control over formatting but are more verbose. Legacy codes are simpler and sufficient for most use cases.
+</Tip>
+
+## Favicon (Server Icon)
+
+<ParamField path="config.status.favicon" type="string">
+  The server icon shown in the multiplayer list. Accepts file paths or base64 data URIs. Optimal size is 64x64 pixels.
+  
+  ```yaml
+  # File path (relative or absolute)
+  favicon: server-icon.png
+  favicon: /path/to/icon.png
+  
+  # Base64 data URI
+  favicon: data:image/png;base64,iVBORw0KG...
+  ```
+</ParamField>
+
+### Favicon Formats
+
+<Tabs>
+  <Tab title="File Path">
+    ```yaml
+    status:
+      favicon: server-icon.png  # Relative to config file
+      favicon: /var/gate/icon.png  # Absolute path
+    ```
+    
+    - Supports PNG images
+    - Recommended size: 64x64 pixels
+    - Gate reads file on startup/reload
+    - File must be accessible to Gate process
+  </Tab>
+  
+  <Tab title="Data URI">
+    ```yaml
+    status:
+      favicon: data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABA...
+    ```
+    
+    - Embed image directly in config
+    - No external file needed
+    - Can be generated from existing image
+    - Useful for containerized deployments
+  </Tab>
+</Tabs>
+
+### Creating a Favicon
+
+<Steps>
+  <Step title="Create or find a 64x64 PNG image">
+    Use any image editor (Photoshop, GIMP, Pixlr, etc.) to create a 64x64 pixel PNG image
+  </Step>
+  
+  <Step title="Save as PNG">
+    Save as `server-icon.png` in the same directory as your `config.yml`
+  </Step>
+  
+  <Step title="Configure in Gate">
+    ```yaml
+    status:
+      favicon: server-icon.png
+    ```
+  </Step>
+  
+  <Step title="Reload configuration">
+    Restart Gate or use `/greload` to apply changes
+  </Step>
+</Steps>
+
+<Accordion title="Convert image to data URI">
+  To embed the image in your config file:
+  
+  ```bash
+  # Linux/macOS
+  echo "data:image/png;base64,$(base64 -w 0 server-icon.png)"
+  
+  # Or use online converter
+  # Visit: https://www.base64-image.de/
+  ```
+  
+  Then paste the output into your config:
+  ```yaml
+  status:
+    favicon: data:image/png;base64,iVBORw0KG...
+  ```
+</Accordion>
+
+## Max Players Display
+
+<ParamField path="config.status.showMaxPlayers" type="integer" default="1000">
+  The maximum player count shown in the server list. This is **cosmetic only** and doesn't limit actual connections.
+  
+  ```yaml
+  status:
+    showMaxPlayers: 1000
+  ```
+</ParamField>
+
+<Warning>
+  This setting only affects what's displayed in the server list. It does **not** limit how many players can connect. Gate has no hard player limit.
+</Warning>
+
+### Display Examples
+
+```yaml
+# Show as small server
+showMaxPlayers: 50
+# Server list shows: "5/50" players
+
+# Show as large network
+showMaxPlayers: 10000  
+# Server list shows: "1247/10000" players
+
+# Show exact count (common for small servers)
+showMaxPlayers: 20
+# Server list shows: "3/20" players
+```
+
+## Forge Server Indicator
+
+<ParamField path="config.announceForge" type="boolean" default="false">
+  Whether to present the proxy as Forge/FML-compatible in status responses. Enable if your backend servers use Forge.
+  
+  ```yaml
+  announceForge: false
+  ```
+</ParamField>
+
+<Info>
+  When enabled, Gate adds Forge/FML data to status responses, telling clients this is a modded server. Backend servers must actually run Forge for this to work properly.
+</Info>
+
+## Ping Request Logging
+
+<ParamField path="config.status.logPingRequests" type="boolean" default="false">
+  Whether to log server list ping requests in the console. Useful for debugging but can be noisy.
+  
+  ```yaml
+  status:
+    logPingRequests: false
+  ```
+</ParamField>
+
+### Example Log Output
+
+When enabled:
+
+```log
+[INFO] Ping request from /203.0.113.45:52841
+[INFO] Ping request from /198.51.100.22:61234
+[INFO] Ping request from /192.0.2.10:49152
+```
+
+<Tip>
+  Enable during initial setup to verify your server is reachable. Disable in production to reduce log noise.
+</Tip>
+
+## Complete Examples
+
+### Basic Configuration
+
+```yaml config.yml
+config:
+  bind: 0.0.0.0:25565
+  
+  servers:
+    lobby: localhost:25566
+    survival: localhost:25567
+  
+  try:
+    - lobby
+  
+  status:
+    motd: |
+      §b§lMY MINECRAFT SERVER
+      §fSurvival §7| §fCreative §7| §fMinigames
+    showMaxPlayers: 100
+    favicon: server-icon.png
+    logPingRequests: false
+```
+
+### Advanced Configuration
+
+```yaml config.yml
+config:
+  bind: 0.0.0.0:25565
+  
+  status:
+    # Multi-line MOTD with colors
+    motd: |
+      §6§l▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+      §b§l    SKYBLOCK NETWORK    
+      §e⚡ §fVersion 1.8-1.20 §e⚡
+      §6§l▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
+    
+    # Large network appearance
+    showMaxPlayers: 5000
+    
+    # Use embedded favicon
+    favicon: data:image/png;base64,iVBORw0KGgoAAAANSUhEUg...
+    
+    # Enable logging for debugging
+    logPingRequests: true
+  
+  # Forge server support
+  announceForge: false
+```
+
+### Network with Different Status per Host
+
+<Info>
+  In classic mode, status is global. For per-hostname status customization, use [Gate Lite mode](/guide/lite) which supports different MOTD/favicon per route.
+</Info>
+
+Lite mode example:
+
+```yaml config.yml
+config:
+  lite:
+    enabled: true
+    routes:
+      - host: lobby.example.com
+        backend: lobby-server:25565
+        fallback:
+          motd: |
+            §b§lLOBBY SERVER
+            §fHub and game selection
+          favicon: lobby-icon.png
+      
+      - host: creative.example.com
+        backend: creative-server:25565
+        fallback:
+          motd: |
+            §a§lCREATIVE SERVER
+            §fBuild amazing creations
+          favicon: creative-icon.png
+```
+
+## Dynamic Status
+
+Gate's status response dynamically includes:
+
+### Player Count
+
+Automatically aggregates players across all connected backend servers:
+
+```
+Online: 47/1000
+```
+
+- Online count = total players on all backends
+- Max count = `showMaxPlayers` setting
+
+### Player Samples
+
+Hover over player count to see sample player names (up to 12 shown):
+
+<Frame>
+  <img src="/images/player-sample.png" alt="Player sample tooltip" />
+</Frame>
+
+### Version Display
+
+Shows protocol version range:
+
+```
+1.8.x - 1.20.x
+```
+
+Gate automatically supports a wide range of Minecraft versions.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Favicon not showing">
+    **Common Issues**:
+    
+    1. **Wrong file format** - Must be PNG, not JPG or other formats
+    2. **Wrong size** - Should be exactly 64x64 pixels
+    3. **File not found** - Check path relative to config.yml location
+    4. **Permissions** - Gate must be able to read the file
+    5. **Not reloaded** - Restart Gate or use `/greload`
+    
+    **Verify**:
+    ```bash
+    # Check file exists and is readable
+    ls -lh server-icon.png
+    
+    # Verify it's PNG and 64x64
+    file server-icon.png
+    identify server-icon.png  # requires ImageMagick
+    ```
+  </Accordion>
+  
+  <Accordion title="MOTD colors not working">
+    **Symptoms**: Color codes show as literal text like `§b§lServer Name`
+    
+    **Causes**:
+    - Copied text from source that doesn't preserve section signs
+    - Using wrong character (regular `S` instead of `§`)
+    - Client-side issue (some resource packs break colors)
+    
+    **Solution**: Ensure you're using actual section sign (`§`):
+    ```yaml
+    motd: |
+      §bColored text  # Correct: § (Alt+0167 or Alt+21)
+      SbNot colored   # Wrong: S
+    ```
+  </Accordion>
+  
+  <Accordion title="Line breaks not working in MOTD">
+    **Issue**: MOTD appears on single line
+    
+    **Solution**: Use `|` (pipe) for multi-line strings in YAML:
+    ```yaml
+    # ✅ Correct - preserves line breaks
+    motd: |
+      Line 1
+      Line 2
+    
+    # ❌ Wrong - single line
+    motd: "Line 1 Line 2"
+    ```
+  </Accordion>
+  
+  <Accordion title="Player count shows 0/1000">
+    **Issue**: Shows 0 players even though people are connected
+    
+    **Causes**:
+    - No players actually on backend servers (they're on Gate but not connected to backends)
+    - Backend servers not properly forwarding player info
+    - Connection issues between Gate and backends
+    
+    **Check**:
+    ```bash
+    # In Gate console
+    /glist
+    
+    # Check which servers have players
+    ```
+  </Accordion>
+  
+  <Accordion title="Status shows 'Can't connect to server'">
+    **Issue**: Server appears offline in server list
+    
+    **Diagnosis**:
+    1. Check Gate is actually running: `netstat -tlnp | grep 25565`
+    2. Verify bind address: ensure not bound to `127.0.0.1` only
+    3. Check firewall: ensure port 25565 is open
+    4. Test locally first: try connecting from same machine
+    
+    **Common Causes**:
+    - Gate not running
+    - Firewall blocking port 25565
+    - Bound to wrong interface (`127.0.0.1` instead of `0.0.0.0`)
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Keep MOTD concise">
+    - Maximum 2 lines (Minecraft limitation)
+    - Each line ~50-60 characters max
+    - Test how it looks in actual Minecraft client
+    - Consider different screen sizes/resolutions
+  </Accordion>
+  
+  <Accordion title="Choose appropriate max players">
+    ```yaml
+    # Small community server
+    showMaxPlayers: 20-50
+    
+    # Medium server
+    showMaxPlayers: 100-500
+    
+    # Large network
+    showMaxPlayers: 1000-10000
+    ```
+    
+    Choose a number that matches your server's scale and looks realistic.
+  </Accordion>
+  
+  <Accordion title="Optimize favicon size">
+    - Use exactly 64x64 pixels
+    - Keep file size under 10KB
+    - Use PNG with transparency if needed
+    - Test visibility at small size (server list icons are tiny)
+    - Avoid detailed images - simple logos work best
+  </Accordion>
+  
+  <Accordion title="Test in actual client">
+    After configuration changes:
+    1. Restart Gate or reload config
+    2. Refresh server list in Minecraft (F5)
+    3. Check MOTD appears correctly
+    4. Verify favicon loads
+    5. Test from different clients/versions if possible
+  </Accordion>
+  
+  <Accordion title="Disable ping logging in production">
+    ```yaml
+    status:
+      logPingRequests: false  # Reduce log noise
+    ```
+    
+    Enable only for debugging - server lists ping frequently.
+  </Accordion>
+</AccordionGroup>
+
+## Related Configuration
+
+<CardGroup cols={2}>
+  <Card title="Overview" icon="gear" href="/configuration/overview">
+    Complete configuration overview and settings
+  </Card>
+  <Card title="Gate Lite" icon="bolt" href="/guide/lite">
+    Per-route status customization in Lite mode
+  </Card>
+  <Card title="Servers" icon="server" href="/configuration/servers">
+    Configure backend servers and routing
+  </Card>
+  <Card title="Query Protocol" icon="database" href="/configuration/query">
+    Enable GameSpy 4 query protocol support
+  </Card>
+</CardGroup>

@@ -1,0 +1,754 @@
+---
+title: "Project Setup"
+description: "Learn how to create a new Go project from scratch that uses Gate. Step-by-step guide with code examples and best practices."
+---
+
+# Project Setup
+
+This guide walks you through creating a new Go project that uses Gate from scratch. If you prefer a pre-configured setup, see the [Plugin Template](/developers/plugin-template) instead.
+
+## Prerequisites
+
+Before you begin, ensure you have:
+
+- **Go 1.21 or higher** installed ([download here](https://golang.org/doc/install))
+- **Basic Go knowledge** (modules, packages, functions)
+- **A text editor** (VS Code, GoLand, Vim, etc.)
+- **Terminal access** for running commands
+
+Verify your Go installation:
+
+```bash
+go version
+# Should output: go version go1.21 or higher
+```
+
+## Creating a New Project
+
+<Steps>
+
+<Step title="Create Project Directory">
+  
+  Create a new directory for your project:
+
+  ```bash
+  mkdir my-gate-proxy
+  cd my-gate-proxy
+  ```
+
+</Step>
+
+<Step title="Initialize Go Module">
+  
+  Initialize a new Go module:
+
+  ```bash
+  go mod init github.com/yourusername/my-gate-proxy
+  ```
+
+  Replace `github.com/yourusername/my-gate-proxy` with your actual module path.
+
+</Step>
+
+<Step title="Add Gate Dependency">
+  
+  Add Gate as a dependency:
+
+  ```bash
+  go get -u go.minekube.com/gate@latest
+  ```
+
+  This will download Gate and update your `go.mod` file.
+
+</Step>
+
+<Step title="Create Main File">
+  
+  Create a `main.go` file with the following content:
+
+  ```go
+  package main
+
+  import (
+      "context"
+      "go.minekube.com/gate/cmd/gate"
+      "go.minekube.com/gate/pkg/edition/java/proxy"
+  )
+
+  func main() {
+      // Add our plugin to be initialized on Gate start
+      proxy.Plugins = append(proxy.Plugins, proxy.Plugin{
+          Name: "MyProxy",
+          Init: func(ctx context.Context, p *proxy.Proxy) error {
+              return initPlugin(p)
+          },
+      })
+
+      // Execute Gate entrypoint and block until shutdown
+      gate.Execute()
+  }
+
+  func initPlugin(p *proxy.Proxy) error {
+      // Your plugin initialization code goes here
+      return nil
+  }
+  ```
+
+</Step>
+
+<Step title="Create Configuration File">
+  
+  Create a `config.yml` file for Gate's configuration:
+
+  ```yaml
+  config:
+    bind: 0.0.0.0:25565
+    motd: "&bMy Gate Proxy"
+    
+    servers:
+      lobby:
+        address: localhost:25566
+      survival:
+        address: localhost:25567
+    
+    try:
+      - lobby
+  ```
+
+  This configures Gate to:
+  - Listen on port 25565
+  - Connect players to the "lobby" server first
+  - Fall back to other servers if lobby is unavailable
+
+</Step>
+
+<Step title="Download Dependencies">
+  
+  Download all module dependencies:
+
+  ```bash
+  go mod download
+  go mod tidy
+  ```
+
+</Step>
+
+<Step title="Build and Run">
+  
+  Build and run your proxy:
+
+  ```bash
+  go run .
+  ```
+
+  You should see output indicating Gate has started:
+
+  ```
+  INFO  Gate is now running on 0.0.0.0:25565
+  ```
+
+</Step>
+
+</Steps>
+
+## Project Structure
+
+A typical Gate project structure:
+
+```
+my-gate-proxy/
+├── main.go              # Entry point
+├── plugin.go            # Plugin logic (optional)
+├── commands.go          # Command definitions (optional)
+├── events.go            # Event handlers (optional)
+├── go.mod               # Module definition
+├── go.sum               # Dependency checksums
+├── config.yml           # Gate configuration
+└── README.md            # Documentation
+```
+
+## Understanding go.mod
+
+After running `go get`, your `go.mod` should look like:
+
+```go
+module github.com/yourusername/my-gate-proxy
+
+go 1.21
+
+require go.minekube.com/gate v0.62.3
+
+require (
+    connectrpc.com/connect v1.19.1 // indirect
+    github.com/go-logr/logr v1.4.3 // indirect
+    github.com/robinbraemer/event v0.1.1 // indirect
+    github.com/spf13/viper v1.21.0 // indirect
+    go.minekube.com/brigodier v0.0.2 // indirect
+    go.minekube.com/common v0.3.0 // indirect
+    // ... other indirect dependencies
+)
+```
+
+**Key dependencies** you'll commonly use:
+
+- `go.minekube.com/gate` - Core proxy functionality
+- `go.minekube.com/brigodier` - Command framework
+- `go.minekube.com/common` - Minecraft components (chat, colors)
+- `github.com/robinbraemer/event` - Event system
+
+## Adding Common Features
+
+### Register a Command
+
+Create `commands.go`:
+
+```go
+package main
+
+import (
+    "fmt"
+    "go.minekube.com/brigodier"
+    "go.minekube.com/common/minecraft/component"
+    "go.minekube.com/gate/pkg/command"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+)
+
+func registerCommands(p *proxy.Proxy) {
+    // Register /ping command
+    p.Command().Register(
+        brigodier.Literal("ping").Executes(
+            command.Command(func(c *command.Context) error {
+                player, ok := c.Source.(proxy.Player)
+                if !ok {
+                    return c.Source.SendMessage(
+                        &component.Text{Content: "Pong!"},
+                    )
+                }
+                
+                return player.SendMessage(&component.Text{
+                    Content: fmt.Sprintf("Pong! Your ping is %s", player.Ping()),
+                })
+            }),
+        ),
+    )
+}
+```
+
+Update `main.go` to call it:
+
+```go
+func initPlugin(p *proxy.Proxy) error {
+    registerCommands(p)
+    return nil
+}
+```
+
+### Handle Events
+
+Create `events.go`:
+
+```go
+package main
+
+import (
+    "github.com/robinbraemer/event"
+    "go.minekube.com/common/minecraft/color"
+    "go.minekube.com/common/minecraft/component"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+)
+
+func subscribeToEvents(p *proxy.Proxy) {
+    // Listen for player login
+    event.Subscribe(p.Event(), 0, onPlayerLogin)
+    
+    // Listen for server switch
+    event.Subscribe(p.Event(), 0, onServerSwitch)
+}
+
+func onPlayerLogin(e *proxy.PostLoginEvent) {
+    player := e.Player()
+    player.SendMessage(&component.Text{
+        Content: "Welcome to the server!",
+        S:       component.Style{Color: color.Green},
+    })
+}
+
+func onServerSwitch(e *proxy.ServerPostConnectEvent) {
+    player := e.Player()
+    if server := player.CurrentServer(); server != nil {
+        player.SendMessage(&component.Text{
+            Content: "You are now on: " + server.Server().ServerInfo().Name(),
+            S:       component.Style{Color: color.Yellow},
+        })
+    }
+}
+```
+
+Update `main.go`:
+
+```go
+func initPlugin(p *proxy.Proxy) error {
+    registerCommands(p)
+    subscribeToEvents(p)
+    return nil
+}
+```
+
+### Working with Components
+
+Gate uses a component system for rich text:
+
+```go
+import (
+    "go.minekube.com/common/minecraft/color"
+    "go.minekube.com/common/minecraft/component"
+)
+
+// Simple text
+msg := &component.Text{
+    Content: "Hello, world!",
+}
+
+// Colored text
+msg := &component.Text{
+    Content: "This is red!",
+    S:       component.Style{Color: color.Red},
+}
+
+// Bold and italic
+msg := &component.Text{
+    Content: "Bold and italic",
+    S: component.Style{
+        Color:  color.Gold,
+        Bold:   component.True,
+        Italic: component.True,
+    },
+}
+
+// Clickable text
+msg := &component.Text{
+    Content: "Click me!",
+    S: component.Style{
+        ClickEvent: component.SuggestCommand("/ping"),
+        HoverEvent: component.ShowText(&component.Text{
+            Content: "Click to run /ping",
+        }),
+    },
+}
+
+// Compound message
+msg := &component.Text{
+    Content: "Welcome ",
+    Extra: []component.Component{
+        &component.Text{
+            Content: player.Username(),
+            S:       component.Style{Color: color.Yellow},
+        },
+        &component.Text{Content: "!"},
+    },
+}
+```
+
+## Complete Example
+
+Here's a complete `main.go` with commands and events:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/robinbraemer/event"
+    "go.minekube.com/brigodier"
+    "go.minekube.com/common/minecraft/color"
+    "go.minekube.com/common/minecraft/component"
+    "go.minekube.com/gate/cmd/gate"
+    "go.minekube.com/gate/pkg/command"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+)
+
+func main() {
+    proxy.Plugins = append(proxy.Plugins, proxy.Plugin{
+        Name: "MyProxy",
+        Init: func(ctx context.Context, p *proxy.Proxy) error {
+            return initPlugin(p)
+        },
+    })
+    gate.Execute()
+}
+
+func initPlugin(p *proxy.Proxy) error {
+    registerCommands(p)
+    subscribeToEvents(p)
+    return nil
+}
+
+func registerCommands(p *proxy.Proxy) {
+    // /ping command
+    p.Command().Register(
+        brigodier.Literal("ping").Executes(
+            command.Command(func(c *command.Context) error {
+                player, ok := c.Source.(proxy.Player)
+                if !ok {
+                    return c.Source.SendMessage(
+                        &component.Text{Content: "Pong!"},
+                    )
+                }
+                return player.SendMessage(&component.Text{
+                    Content: fmt.Sprintf("Pong! Latency: %s", player.Ping()),
+                    S:       component.Style{Color: color.Green},
+                })
+            }),
+        ),
+    )
+
+    // /broadcast <message> command
+    p.Command().Register(
+        brigodier.Literal("broadcast").Then(
+            brigodier.Argument("message", brigodier.StringPhrase).Executes(
+                command.Command(func(c *command.Context) error {
+                    message := c.String("message")
+                    msg := &component.Text{
+                        Content: "[Broadcast] " + message,
+                        S:       component.Style{Color: color.Gold},
+                    }
+                    for _, player := range p.Players() {
+                        _ = player.SendMessage(msg)
+                    }
+                    return nil
+                }),
+            ),
+        ),
+    )
+}
+
+func subscribeToEvents(p *proxy.Proxy) {
+    event.Subscribe(p.Event(), 0, onPlayerLogin)
+    event.Subscribe(p.Event(), 0, onServerSwitch)
+}
+
+func onPlayerLogin(e *proxy.PostLoginEvent) {
+    player := e.Player()
+    _ = player.SendMessage(&component.Text{
+        Content: fmt.Sprintf("Welcome, %s!", player.Username()),
+        S:       component.Style{Color: color.Green, Bold: component.True},
+    })
+}
+
+func onServerSwitch(e *proxy.ServerPostConnectEvent) {
+    player := e.Player()
+    if server := player.CurrentServer(); server != nil {
+        _ = player.SendMessage(&component.Text{
+            Content: "Connected to " + server.Server().ServerInfo().Name(),
+            S:       component.Style{Color: color.Aqua},
+        })
+    }
+}
+```
+
+## Building Your Project
+
+### Development Build
+
+For quick testing:
+
+```bash
+go run .
+```
+
+### Production Build
+
+Create an optimized binary:
+
+```bash
+# Basic build
+go build -o my-proxy
+
+# Optimized build (smaller binary)
+CGO_ENABLED=0 go build -ldflags="-s -w" -o my-proxy
+
+# Run the binary
+./my-proxy
+```
+
+### Cross-Compilation
+
+Build for different platforms:
+
+```bash
+# Linux (most common for servers)
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o my-proxy-linux
+
+# Windows
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o my-proxy.exe
+
+# macOS (Intel)
+GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o my-proxy-macos-intel
+
+# macOS (Apple Silicon)
+GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o my-proxy-macos-arm
+```
+
+## Configuration Best Practices
+
+### Separate Environments
+
+Create different config files for different environments:
+
+```bash
+config.dev.yml    # Development
+config.prod.yml   # Production
+config.test.yml   # Testing
+```
+
+Run with a specific config:
+
+```bash
+./my-proxy --config config.prod.yml
+```
+
+### Environment Variables
+
+Use environment variables for sensitive data:
+
+```yaml
+config:
+  forwarding:
+    mode: modern
+    # Secret loaded from environment variable
+```
+
+```bash
+export GATE_VELOCITY_SECRET="your-secret-here"
+./my-proxy
+```
+
+### Validation
+
+Gate validates your configuration on startup. Common issues:
+
+```yaml
+# ❌ Invalid: missing address
+servers:
+  lobby: {}
+
+# ✅ Valid: includes address
+servers:
+  lobby:
+    address: localhost:25566
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+
+<Accordion title="Module download fails">
+  
+  **Error**: `go: module go.minekube.com/gate: Get "https://proxy.golang.org/..." failed`
+  
+  **Solutions**:
+  
+  1. Check your internet connection
+  2. Verify firewall isn't blocking Go module proxy
+  3. Try setting `GOPROXY` environment variable:
+     ```bash
+     export GOPROXY=https://proxy.golang.org,direct
+     go get -u go.minekube.com/gate@latest
+     ```
+
+</Accordion>
+
+<Accordion title="Import cycle errors">
+  
+  **Error**: `import cycle not allowed`
+  
+  **Solution**: Reorganize your code to avoid circular imports. For example:
+  
+  ```go
+  // ❌ Bad: main.go imports plugin.go, plugin.go imports main.go
+  
+  // ✅ Good: Use separate packages or interfaces
+  package main
+  
+  package plugin
+  ```
+
+</Accordion>
+
+<Accordion title="Port already in use">
+  
+  **Error**: `bind: address already in use`
+  
+  **Solutions**:
+  
+  1. Find and stop the process using the port:
+     ```bash
+     # Linux/macOS
+     lsof -i :25565
+     kill <PID>
+     
+     # Windows
+     netstat -ano | findstr :25565
+     taskkill /PID <PID> /F
+     ```
+  
+  2. Or change the port in `config.yml`:
+     ```yaml
+     config:
+       bind: 0.0.0.0:25566
+     ```
+
+</Accordion>
+
+<Accordion title="Config file not found">
+  
+  **Error**: `config file not found`
+  
+  **Solution**: Ensure `config.yml` is in the same directory as your binary:
+  
+  ```bash
+  ls -la config.yml
+  # If missing, create it from the template above
+  ```
+  
+  Or specify the path explicitly:
+  ```bash
+  ./my-proxy --config /path/to/config.yml
+  ```
+
+</Accordion>
+
+<Accordion title="Backend servers not connecting">
+  
+  **Error**: Players can't connect to backend servers
+  
+  **Solutions**:
+  
+  1. Verify backend servers are running:
+     ```bash
+     telnet localhost 25566
+     ```
+  
+  2. Check firewall rules allow connections
+  
+  3. Verify addresses in `config.yml` are correct
+  
+  4. Check backend server logs for connection attempts
+
+</Accordion>
+
+</AccordionGroup>
+
+## Testing Your Proxy
+
+### Manual Testing
+
+1. Start your proxy:
+   ```bash
+   go run .
+   ```
+
+2. Start a backend server (e.g., Paper, Spigot) on port 25566
+
+3. Connect with Minecraft client to `localhost:25565`
+
+### Unit Testing
+
+Create `main_test.go`:
+
+```go
+package main
+
+import (
+    "testing"
+)
+
+func TestPluginInit(t *testing.T) {
+    // Test your plugin initialization
+}
+```
+
+Run tests:
+
+```bash
+go test -v
+```
+
+## Performance Tips
+
+### Use Goroutines for Async Operations
+
+```go
+// ❌ Bad: Blocks the event handler
+func onPlayerJoin(e *proxy.PostLoginEvent) {
+    time.Sleep(5 * time.Second) // Blocks!
+    e.Player().SendMessage(msg)
+}
+
+// ✅ Good: Runs asynchronously
+func onPlayerJoin(e *proxy.PostLoginEvent) {
+    player := e.Player()
+    go func() {
+        time.Sleep(5 * time.Second)
+        player.SendMessage(msg)
+    }()
+}
+```
+
+### Batch Player Operations
+
+```go
+// Send message to all players efficiently
+for _, player := range p.Players() {
+    go func(p proxy.Player) {
+        _ = p.SendMessage(msg)
+    }(player)
+}
+```
+
+### Resource Cleanup
+
+Use context cancellation:
+
+```go
+func initPlugin(p *proxy.Proxy) error {
+    ctx := context.Background()
+    
+    // Start background task
+    go periodicTask(ctx)
+    
+    // Cleanup on shutdown
+    event.Subscribe(p.Event(), 0, func(e *proxy.ShutdownEvent) {
+        // Cancel context, close connections, etc.
+    })
+    
+    return nil
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Commands Guide" icon="terminal" href="/developers/commands">
+    Learn how to create powerful commands
+  </Card>
+  <Card title="Events Guide" icon="bolt" href="/developers/events">
+    Master the event system
+  </Card>
+  <Card title="Simple Proxy Example" icon="code" href="/developers/examples/simple-proxy">
+    Study a complete working example
+  </Card>
+  <Card title="API Reference" icon="book" href="/developers/api">
+    Explore the full API documentation
+  </Card>
+</CardGroup>
+
+## Additional Resources
+
+- **Go Documentation**: [golang.org/doc](https://golang.org/doc/)
+- **Gate Package Docs**: [pkg.go.dev/go.minekube.com/gate](https://pkg.go.dev/go.minekube.com/gate)
+- **Brigodier (Commands)**: [pkg.go.dev/go.minekube.com/brigodier](https://pkg.go.dev/go.minekube.com/brigodier)
+- **Event System**: [github.com/robinbraemer/event](https://github.com/robinbraemer/event)
+- **Discord Community**: [discord.gg/6vMDqWE](https://discord.gg/6vMDqWE)

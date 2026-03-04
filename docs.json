@@ -1,122 +1,193 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Gate",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#2e8b57",
+    "light": "#3cb371",
+    "dark": "#1e6f3f"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "/favicon.png",
+  "logo": {
+    "light": "/logo-light.png",
+    "dark": "/logo-dark.png"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/minekube/gate"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/minekube/gate",
+      "discord": "https://discord.gg/6vMDqWE"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "why-gate"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Installation",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "installation/binary",
+              "installation/docker",
+              "installation/kubernetes",
+              "installation/go"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "concepts/architecture",
+              "concepts/how-it-works",
+              "concepts/editions"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Configuration",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "configuration/overview",
+              "configuration/servers",
+              "configuration/forced-hosts",
+              "configuration/status-ping",
+              "configuration/compression",
+              "configuration/forwarding"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/bedrock-crossplay",
+              "features/lite-mode",
+              "features/modded-servers",
+              "features/builtin-commands",
+              "features/rate-limiting"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/online-mode",
+              "security/forwarding-modes",
+              "security/key-authentication",
+              "security/proxy-protocol"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Developers",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Getting Started",
             "pages": [
-              "api-reference/introduction"
+              "developers/introduction",
+              "developers/plugin-template",
+              "developers/project-setup"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Core APIs",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "developers/api/proxy",
+              "developers/api/player",
+              "developers/api/server",
+              "developers/api/connection"
+            ]
+          },
+          {
+            "group": "Events System",
+            "pages": [
+              "developers/events/overview",
+              "developers/events/lifecycle",
+              "developers/events/player-events",
+              "developers/events/server-events"
+            ]
+          },
+          {
+            "group": "Commands",
+            "pages": [
+              "developers/commands/overview",
+              "developers/commands/registration",
+              "developers/commands/brigadier",
+              "developers/commands/permissions"
+            ]
+          },
+          {
+            "group": "Protocol",
+            "pages": [
+              "developers/protocol/packets",
+              "developers/protocol/plugin-channels",
+              "developers/protocol/sound-system"
+            ]
+          },
+          {
+            "group": "Examples",
+            "pages": [
+              "developers/examples/simple-plugin",
+              "developers/examples/command-plugin",
+              "developers/examples/event-listener"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Deployment",
+        "groups": [
+          {
+            "group": "Operations",
+            "pages": [
+              "deployment/overview",
+              "deployment/production-checklist",
+              "deployment/monitoring"
+            ]
+          },
+          {
+            "group": "Docker",
+            "pages": [
+              "deployment/docker/getting-started",
+              "deployment/docker/compose",
+              "deployment/docker/configuration"
+            ]
+          },
+          {
+            "group": "Kubernetes",
+            "pages": [
+              "deployment/kubernetes/setup",
+              "deployment/kubernetes/manifests",
+              "deployment/kubernetes/scaling"
+            ]
+          },
+          {
+            "group": "Observability",
+            "pages": [
+              "deployment/observability/opentelemetry",
+              "deployment/observability/metrics",
+              "deployment/observability/tracing",
+              "deployment/observability/logging"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "deployment/advanced/connect",
+              "deployment/advanced/load-balancing",
+              "deployment/advanced/failover"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

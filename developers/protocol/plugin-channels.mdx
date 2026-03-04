@@ -1,0 +1,491 @@
+---
+title: 'Plugin Channels - Custom Protocol Communication'
+description: 'Learn about Minecraft plugin messaging channels and how Gate handles MC|Brand, REGISTER, and custom communication.'
+---
+
+# Plugin Channels
+
+Plugin channels (also called plugin messages) allow custom data communication between clients, proxies, and servers using the Minecraft protocol. Gate provides comprehensive support for both legacy and modern plugin channel formats.
+
+## Plugin Message Packet
+
+All plugin messages use the `plugin.Message` packet:
+
+```go
+type Message struct {
+    Channel string   // Channel identifier
+    Data    []byte   // Raw message data
+}
+```
+
+**Example:**
+```go
+import "go.minekube.com/gate/pkg/edition/java/proto/packet/plugin"
+
+msg := &plugin.Message{
+    Channel: "minecraft:brand",
+    Data:    []byte("MyClient"),
+}
+```
+
+## Standard Plugin Channels
+
+Gate defines constants for standard Minecraft plugin channels:
+
+```go
+const (
+    // Brand channels
+    BrandChannelLegacy = "MC|Brand"         // < 1.13
+    BrandChannel       = "minecraft:brand"  // >= 1.13
+    
+    // Registration channels
+    RegisterChannelLegacy   = "REGISTER"              // < 1.13
+    RegisterChannel         = "minecraft:register"    // >= 1.13
+    UnregisterChannelLegacy = "UNREGISTER"            // < 1.13
+    UnregisterChannel       = "minecraft:unregister"  // >= 1.13
+)
+```
+
+### Channel Name Transformation
+
+Gate automatically transforms legacy channel names to modern format for 1.13+ clients:
+
+```go
+func TransformLegacyToModernChannel(name string) string
+```
+
+**Transformations:**
+- `MC|Brand` → `minecraft:brand`
+- `REGISTER` → `minecraft:register`
+- `UNREGISTER` → `minecraft:unregister`
+- `BungeeCord` → `bungeecord:main`
+- Other legacy names → `legacy:<lowercased>`
+
+**Example:**
+```go
+import "go.minekube.com/gate/pkg/edition/java/proto/packet/plugin"
+
+modern := plugin.TransformLegacyToModernChannel("MC|Brand")
+fmt.Println(modern)  // Output: minecraft:brand
+
+legacy := plugin.TransformLegacyToModernChannel("MyChannel")
+fmt.Println(legacy)  // Output: legacy:mychannel
+```
+
+## Brand Channel (minecraft:brand)
+
+The brand channel identifies the client or server software:
+
+### Reading Brand Messages
+
+```go
+import "go.minekube.com/gate/pkg/edition/java/proto/packet/plugin"
+
+func handleBrandMessage(msg *plugin.Message) {
+    if plugin.McBrand(msg) {
+        brand := plugin.ReadBrandMessage(msg.Data)
+        fmt.Printf("Client brand: %s\n", brand)
+    }
+}
+```
+
+### Rewriting Brand Messages
+
+Gate automatically rewrites brand messages to indicate proxy presence:
+
+```go
+func RewriteMinecraftBrand(message *Message, protocol proto.Protocol) *Message
+```
+
+**Example transformation:**
+- Original: `"vanilla"`
+- Rewritten: `"vanilla (Gate by Minekube)"`
+
+**Implementation:**
+```go
+import (
+    "go.minekube.com/gate/pkg/edition/java/proto/packet/plugin"
+    "go.minekube.com/gate/pkg/edition/java/proto/version"
+)
+
+func rewriteBrand(msg *plugin.Message, protocol proto.Protocol) {
+    if plugin.McBrand(msg) {
+        rewritten := plugin.RewriteMinecraftBrand(msg, protocol)
+        // Use rewritten message
+        player.SendPluginMessage(
+            message.NewChannelIdentifier(rewritten.Channel),
+            rewritten.Data,
+        )
+    }
+}
+```
+
+## Registration Channels
+
+Clients and servers use registration channels to announce supported plugin channels:
+
+### Checking Registration Messages
+
+```go
+import "go.minekube.com/gate/pkg/edition/java/proto/packet/plugin"
+
+func handlePluginMessage(msg *plugin.Message) {
+    if plugin.IsRegister(msg) {
+        channels := plugin.Channels(msg)
+        fmt.Printf("Registered channels: %v\n", channels)
+    }
+    
+    if plugin.IsUnregister(msg) {
+        channels := plugin.Channels(msg)
+        fmt.Printf("Unregistered channels: %v\n", channels)
+    }
+}
+```
+
+### Parsing Channel Lists
+
+Registration messages contain null-terminated channel names:
+
+```go
+func Channels(p *Message) []string
+```
+
+**Example:**
+```go
+registerMsg := &plugin.Message{
+    Channel: "minecraft:register",
+    Data:    []byte("minecraft:brand\x00mymod:custom\x00mymod:data"),
+}
+
+channels := plugin.Channels(registerMsg)
+// channels = ["minecraft:brand", "mymod:custom", "mymod:data"]
+```
+
+### Constructing Registration Packets
+
+```go
+import (
+    "go.minekube.com/gate/pkg/edition/java/proto/packet/plugin"
+    "go.minekube.com/gate/pkg/edition/java/proto/version"
+)
+
+func registerChannels(player Player, channels ...string) {
+    packet := plugin.ConstructChannelsPacket(
+        player.Protocol(),
+        channels...,
+    )
+    player.SendPluginMessage(
+        message.NewChannelIdentifier(packet.Channel),
+        packet.Data,
+    )
+}
+
+// Usage
+registerChannels(player, "mymod:custom", "mymod:data")
+```
+
+## Sending Plugin Messages
+
+### To Player (Client)
+
+```go
+import "go.minekube.com/gate/pkg/edition/java/proxy/message"
+
+func sendToClient(player Player) {
+    channel := message.NewChannelIdentifier("mymod:custom")
+    data := []byte("Hello, client!")
+    
+    err := player.SendPluginMessage(channel, data)
+    if err != nil {
+        // Handle error
+    }
+}
+```
+
+### To Server (Backend)
+
+```go
+func sendToServer(player Player) {
+    serverConn := player.CurrentServer()
+    if serverConn == nil {
+        return  // Player not connected to a server
+    }
+    
+    channel := message.NewChannelIdentifier("mymod:custom")
+    data := []byte("Hello, server!")
+    
+    err := serverConn.SendPluginMessage(channel, data)
+    if err != nil {
+        // Handle error
+    }
+}
+```
+
+## Receiving Plugin Messages
+
+Handle incoming plugin messages in session handlers:
+
+```go
+import (
+    "go.minekube.com/gate/pkg/edition/java/proto/packet/plugin"
+    "go.minekube.com/gate/pkg/gate/proto"
+)
+
+func (h *CustomSessionHandler) HandlePacket(pc *proto.PacketContext) {
+    if msg, ok := pc.Packet.(*plugin.Message); ok {
+        h.handlePluginMessage(msg)
+        return
+    }
+    h.SessionHandler.HandlePacket(pc)
+}
+
+func (h *CustomSessionHandler) handlePluginMessage(msg *plugin.Message) {
+    switch {
+    case plugin.McBrand(msg):
+        brand := plugin.ReadBrandMessage(msg.Data)
+        h.log.Info("Client brand", "brand", brand)
+        
+    case plugin.IsRegister(msg):
+        channels := plugin.Channels(msg)
+        h.log.Info("Registered channels", "channels", channels)
+        
+    case msg.Channel == "mymod:custom":
+        h.handleCustomChannel(msg.Data)
+        
+    default:
+        h.log.Debug("Unknown plugin message", "channel", msg.Channel)
+    }
+}
+```
+
+## Common Plugin Channels
+
+### BungeeCord Channel
+
+The BungeeCord plugin channel (`bungeecord:main`) allows server-to-proxy communication:
+
+```go
+import "go.minekube.com/gate/pkg/edition/java/proxy/bungeecord"
+
+// Gate handles BungeeCord messages automatically
+// Enable in config:
+config := &config.Config{
+    BungeePluginChannelEnabled: true,
+}
+```
+
+**Supported BungeeCord sub-channels:**
+- `Connect` - Transfer player to another server
+- `ConnectOther` - Transfer another player
+- `IP` - Get player IP address
+- `PlayerCount` - Get server player count
+- `PlayerList` - Get player list
+- `GetServers` - Get server list
+- `Message` - Send message to player
+- `Forward` - Forward plugin message
+- `UUID` - Get player UUID
+- `UUIDOther` - Get another player's UUID
+
+### Forge/ModLoader Channels
+
+Gate supports Forge and Fabric mod channels:
+
+```go
+// Forge channels (legacy)
+"FML|HS"           // Handshake
+"FML"              // General
+"FORGE"            // Forge data
+
+// Modern Forge/Fabric
+"fml:handshake"    // Forge handshake
+"fml:play"         // Forge play data
+"fabric:registry" // Fabric registry sync
+```
+
+### Custom Mod Channels
+
+Create custom channels for your mods:
+
+```go
+const (
+    ModChannelNamespace = "mymod"
+    CustomDataChannel   = "mymod:data"
+    CustomConfigChannel = "mymod:config"
+)
+
+// Register channels when player connects
+func onPlayerJoin(player Player) {
+    registerChannels(player, CustomDataChannel, CustomConfigChannel)
+}
+
+// Send custom data
+func sendCustomData(player Player, data []byte) {
+    channel := message.NewChannelIdentifier(CustomDataChannel)
+    player.SendPluginMessage(channel, data)
+}
+```
+
+## Channel Message Sink/Source
+
+Gate provides interfaces for plugin message handling:
+
+```go
+type ChannelMessageSink interface {
+    SendPluginMessage(identifier ChannelIdentifier, data []byte) error
+}
+
+type ChannelMessageSource interface {
+    // No methods - marker interface
+}
+```
+
+Both `Player` and `ServerConnection` implement these interfaces:
+
+```go
+// Player implements both interfaces
+var _ message.ChannelMessageSink = (*Player)(nil)
+var _ message.ChannelMessageSource = (*Player)(nil)
+
+// ServerConnection implements both interfaces  
+var _ message.ChannelMessageSink = (*ServerConnection)(nil)
+var _ message.ChannelMessageSource = (*ServerConnection)(nil)
+```
+
+## Advanced: Binary Data Encoding
+
+For structured plugin messages, use encoding packages:
+
+```go
+import (
+    "bytes"
+    "encoding/binary"
+    "go.minekube.com/gate/pkg/edition/java/proto/util"
+)
+
+// Encode custom message
+func encodeCustomMessage(messageType byte, value int32, text string) []byte {
+    buf := new(bytes.Buffer)
+    
+    // Write message type
+    util.WriteByte(buf, messageType)
+    
+    // Write integer value
+    util.WriteInt32(buf, value)
+    
+    // Write string
+    util.WriteString(buf, text)
+    
+    return buf.Bytes()
+}
+
+// Decode custom message
+func decodeCustomMessage(data []byte) (byte, int32, string, error) {
+    buf := bytes.NewReader(data)
+    
+    msgType, err := util.ReadByte(buf)
+    if err != nil {
+        return 0, 0, "", err
+    }
+    
+    value, err := util.ReadInt32(buf)
+    if err != nil {
+        return 0, 0, "", err
+    }
+    
+    text, err := util.ReadString(buf)
+    if err != nil {
+        return 0, 0, "", err
+    }
+    
+    return msgType, value, text, nil
+}
+```
+
+## Complete Example: Custom Plugin Channel
+
+```go
+package main
+
+import (
+    "bytes"
+    "log"
+    
+    "go.minekube.com/gate/pkg/edition/java/proto/packet/plugin"
+    "go.minekube.com/gate/pkg/edition/java/proto/util"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+    "go.minekube.com/gate/pkg/edition/java/proxy/message"
+)
+
+const CustomChannel = "mymod:rpc"
+
+// Send RPC request to client
+func sendRPCRequest(player proxy.Player, method string, args ...string) error {
+    buf := new(bytes.Buffer)
+    
+    // Write method name
+    if err := util.WriteString(buf, method); err != nil {
+        return err
+    }
+    
+    // Write argument count
+    if err := util.WriteVarInt(buf, len(args)); err != nil {
+        return err
+    }
+    
+    // Write each argument
+    for _, arg := range args {
+        if err := util.WriteString(buf, arg); err != nil {
+            return err
+        }
+    }
+    
+    channel := message.NewChannelIdentifier(CustomChannel)
+    return player.SendPluginMessage(channel, buf.Bytes())
+}
+
+// Handle RPC response from client
+func handleRPCResponse(data []byte) error {
+    buf := bytes.NewReader(data)
+    
+    // Read method name
+    method, err := util.ReadString(buf)
+    if err != nil {
+        return err
+    }
+    
+    // Read result count
+    count, err := util.ReadVarInt(buf)
+    if err != nil {
+        return err
+    }
+    
+    // Read results
+    results := make([]string, count)
+    for i := 0; i < count; i++ {
+        results[i], err = util.ReadString(buf)
+        if err != nil {
+            return err
+        }
+    }
+    
+    log.Printf("RPC response: %s -> %v", method, results)
+    return nil
+}
+```
+
+## Best Practices
+
+1. **Always register channels** before sending plugin messages
+2. **Use modern channel names** (namespace:channel) for 1.13+
+3. **Handle both legacy and modern** channel names for compatibility
+4. **Validate message data** before processing to prevent crashes
+5. **Use structured encoding** (varint, string, etc.) for complex data
+6. **Check for nil** server connections before sending to backend
+7. **Log unknown channels** for debugging
+
+## See Also
+
+- [Packets](/developers/protocol/packets) - Packet encoding/decoding
+- [Sound System](/developers/protocol/sound-system) - Sound packet handling
+- [Message Package](https://pkg.go.dev/go.minekube.com/gate/pkg/edition/java/proxy/message) - Channel identifiers
+- [BungeeCord Protocol](https://www.spigotmc.org/wiki/bukkit-bungee-plugin-messaging-channel/) - BungeeCord channel reference

@@ -1,0 +1,442 @@
+---
+title: "Plugin Template"
+description: "Get started quickly with Gate's plugin template. Fork the repository and start building your Minecraft proxy extension in minutes."
+---
+
+# Plugin Template
+
+The fastest way to start building with Gate is to use our official plugin template. It provides a complete, working example with all the boilerplate configured.
+
+## What's Included
+
+The [gate-plugin-template](https://github.com/minekube/gate-plugin-template) repository includes:
+
+- **Pre-configured Go module** with Gate dependencies
+- **Example plugin code** demonstrating common patterns
+- **Build configuration** with Makefile
+- **Docker support** for containerized deployments
+- **CI/CD examples** for automated builds
+- **Documentation** and code comments
+
+## Quick Start
+
+<Steps>
+
+<Step title="Fork or Clone the Template">
+  
+  Visit the [gate-plugin-template](https://github.com/minekube/gate-plugin-template) repository and fork it to your GitHub account, or clone it directly:
+
+  ```bash
+  git clone https://github.com/minekube/gate-plugin-template.git my-gate-plugin
+  cd my-gate-plugin
+  ```
+
+</Step>
+
+<Step title="Install Dependencies">
+  
+  Download the required Go modules:
+
+  ```bash
+  go mod download
+  ```
+
+  This will fetch Gate and all its dependencies.
+
+</Step>
+
+<Step title="Explore the Code">
+  
+  Open `plugin.go` to see the example plugin implementation. The template includes:
+
+  - Plugin initialization hook
+  - Example command registration
+  - Event listener examples
+  - Common API usage patterns
+
+</Step>
+
+<Step title="Build and Run">
+  
+  Compile and run your plugin:
+
+  ```bash
+  go build -o gate-plugin
+  ./gate-plugin
+  ```
+
+  Or use the provided Makefile:
+
+  ```bash
+  make run
+  ```
+
+</Step>
+
+<Step title="Connect and Test">
+  
+  Connect to your proxy using a Minecraft client:
+
+  ```
+  Server Address: localhost:25565
+  ```
+
+  Try the example commands included in the template.
+
+</Step>
+
+</Steps>
+
+## Template Structure
+
+The template is organized as follows:
+
+```
+gate-plugin-template/
+├── plugin.go           # Main plugin implementation
+├── go.mod             # Go module definition
+├── go.sum             # Dependency checksums
+├── config.yml         # Gate configuration file
+├── Makefile           # Build automation
+├── Dockerfile         # Container image definition
+├── .github/
+│   └── workflows/     # CI/CD workflows
+└── README.md          # Documentation
+```
+
+### Key Files
+
+**plugin.go**: Contains your plugin's main logic
+```go
+package main
+
+import (
+    "context"
+    "go.minekube.com/gate/cmd/gate"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+)
+
+func main() {
+    // Register plugin
+    proxy.Plugins = append(proxy.Plugins, proxy.Plugin{
+        Name: "MyPlugin",
+        Init: func(ctx context.Context, p *proxy.Proxy) error {
+            // Your initialization code
+            return initPlugin(p)
+        },
+    })
+
+    // Start Gate
+    gate.Execute()
+}
+```
+
+**go.mod**: Declares your module and Gate dependency
+```go
+module github.com/yourusername/my-gate-plugin
+
+go 1.21
+
+require (
+    go.minekube.com/gate v0.62.3
+    go.minekube.com/brigodier v0.0.2
+    go.minekube.com/common v0.3.0
+    github.com/robinbraemer/event v0.1.1
+)
+```
+
+**config.yml**: Gate's configuration file
+```yaml
+config:
+  bind: 0.0.0.0:25565
+  servers:
+    lobby:
+      address: localhost:25566
+    survival:
+      address: localhost:25567
+  try:
+    - lobby
+```
+
+## Customizing the Template
+
+### 1. Update Module Name
+
+Edit `go.mod` to reflect your project:
+
+```go
+module github.com/yourusername/my-awesome-plugin
+
+go 1.21
+
+require (
+    go.minekube.com/gate v0.62.3
+    // ... other dependencies
+)
+```
+
+Then update imports:
+```bash
+go mod tidy
+```
+
+### 2. Rename Your Plugin
+
+In `plugin.go`, change the plugin name:
+
+```go
+proxy.Plugins = append(proxy.Plugins, proxy.Plugin{
+    Name: "MyAwesomePlugin", // Your plugin name here
+    Init: func(ctx context.Context, p *proxy.Proxy) error {
+        return initMyPlugin(p)
+    },
+})
+```
+
+### 3. Add Your Features
+
+Extend the initialization function to add your custom logic:
+
+```go
+func initMyPlugin(p *proxy.Proxy) error {
+    // Register commands
+    registerCommands(p)
+    
+    // Subscribe to events
+    subscribeToEvents(p)
+    
+    // Initialize your systems
+    setupDatabase()
+    
+    return nil
+}
+```
+
+## Common Patterns
+
+The template demonstrates several common patterns:
+
+### Command Registration
+
+```go
+import (
+    "go.minekube.com/brigodier"
+    "go.minekube.com/gate/pkg/command"
+)
+
+func registerCommands(p *proxy.Proxy) {
+    p.Command().Register(
+        brigodier.Literal("hello").Executes(
+            command.Command(func(c *command.Context) error {
+                return c.Source.SendMessage(
+                    &component.Text{Content: "Hello from Gate!"},
+                )
+            }),
+        ),
+    )
+}
+```
+
+### Event Subscription
+
+```go
+import (
+    "github.com/robinbraemer/event"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+)
+
+func subscribeToEvents(p *proxy.Proxy) {
+    event.Subscribe(p.Event(), 0, onPlayerJoin)
+}
+
+func onPlayerJoin(e *proxy.PostLoginEvent) {
+    player := e.Player()
+    logger.Info("Player joined", "username", player.Username())
+}
+```
+
+### Accessing Player Data
+
+```go
+func showPlayerInfo(p proxy.Player) {
+    // Get player details
+    username := p.Username()
+    uuid := p.ID()
+    ping := p.Ping()
+    
+    // Get current server
+    if server := p.CurrentServer(); server != nil {
+        serverName := server.Server().ServerInfo().Name()
+    }
+    
+    // Send message
+    p.SendMessage(&component.Text{
+        Content: fmt.Sprintf("Hello %s!", username),
+    })
+}
+```
+
+## Building for Production
+
+### Compile Optimized Binary
+
+```bash
+CGO_ENABLED=0 go build -ldflags="-s -w" -o gate-plugin
+```
+
+Flags:
+- `CGO_ENABLED=0`: Disable C dependencies for pure Go binary
+- `-ldflags="-s -w"`: Strip debug info to reduce binary size
+
+### Cross-Compile for Linux
+
+From macOS or Windows:
+
+```bash
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o gate-plugin-linux
+```
+
+### Docker Build
+
+The template includes a Dockerfile:
+
+```bash
+docker build -t my-gate-plugin .
+docker run -p 25565:25565 my-gate-plugin
+```
+
+## Configuration Management
+
+### Environment Variables
+
+Gate supports environment variable overrides:
+
+```bash
+export GATE_BIND=0.0.0.0:25565
+export GATE_VELOCITY_SECRET=your-secret-here
+./gate-plugin
+```
+
+### Custom Config Path
+
+```bash
+./gate-plugin --config /path/to/custom-config.yml
+```
+
+### Config Validation
+
+Gate validates your configuration on startup and logs any errors or warnings.
+
+## Troubleshooting
+
+### Build Errors
+
+<Accordion title="Error: package go.minekube.com/gate is not in GOROOT">
+  
+  **Solution**: Download dependencies first:
+  
+  ```bash
+  go mod download
+  go mod tidy
+  ```
+
+</Accordion>
+
+<Accordion title="Error: cannot find module providing package">
+  
+  **Solution**: Update your go.mod and download missing packages:
+  
+  ```bash
+  go get -u go.minekube.com/gate@latest
+  go mod tidy
+  ```
+
+</Accordion>
+
+<Accordion title="Build succeeds but binary doesn't run">
+  
+  **Solution**: Check for config.yml in the working directory:
+  
+  ```bash
+  ls -la config.yml
+  # If missing, create one from the template
+  ```
+
+</Accordion>
+
+### Runtime Issues
+
+<Accordion title="Error: address already in use">
+  
+  **Solution**: Another process is using port 25565. Either stop it or change the port in config.yml:
+  
+  ```yaml
+  config:
+    bind: 0.0.0.0:25566  # Use a different port
+  ```
+
+</Accordion>
+
+<Accordion title="Players can't connect to backend servers">
+  
+  **Solution**: Verify backend servers are running and accessible:
+  
+  ```bash
+  # Test connection to backend
+  telnet localhost 25566
+  ```
+  
+  Check your `config.yml` server addresses are correct.
+
+</Accordion>
+
+<Accordion title="Commands not working">
+  
+  **Solution**: Ensure commands are registered before Gate starts:
+  
+  ```go
+  func Init(ctx context.Context, p *proxy.Proxy) error {
+      registerCommands(p)  // Must be in Init function
+      return nil
+  }
+  ```
+
+</Accordion>
+
+## Updating Gate Version
+
+To update to the latest Gate version:
+
+```bash
+go get -u go.minekube.com/gate@latest
+go mod tidy
+go build
+```
+
+Check the [changelog](https://github.com/minekube/gate/releases) for breaking changes.
+
+## Next Steps
+
+Now that you have the template running:
+
+<CardGroup cols={2}>
+  <Card title="Learn Commands" icon="terminal" href="/developers/commands">
+    Register custom commands for your players
+  </Card>
+  <Card title="Handle Events" icon="bolt" href="/developers/events">
+    React to player actions and server events
+  </Card>
+  <Card title="View Examples" icon="code" href="/developers/examples/simple-proxy">
+    Study the complete simple-proxy example
+  </Card>
+  <Card title="API Reference" icon="book" href="/developers/api">
+    Explore the full API documentation
+  </Card>
+</CardGroup>
+
+## Resources
+
+- **Template Repository**: [github.com/minekube/gate-plugin-template](https://github.com/minekube/gate-plugin-template)
+- **Example Code**: [Simple Proxy Example](/developers/examples/simple-proxy)
+- **Go Docs**: [pkg.go.dev/go.minekube.com/gate](https://pkg.go.dev/go.minekube.com/gate)
+- **Community**: [Discord Server](https://discord.gg/6vMDqWE)

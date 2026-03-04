@@ -1,0 +1,264 @@
+---
+title: OpenTelemetry Integration
+description: Configure OpenTelemetry observability in Gate Minecraft proxy for comprehensive monitoring with metrics, traces, and logs
+---
+
+# OpenTelemetry Integration
+
+Gate includes built-in support for OpenTelemetry, providing comprehensive observability through metrics, distributed tracing, and structured logging. OpenTelemetry is a vendor-agnostic observability framework that allows you to instrument your application and export telemetry data to various backends.
+
+## Overview
+
+OpenTelemetry is an observability framework designed to facilitate the generation, export, and collection of telemetry data such as traces, metrics, and logs. Gate leverages the [otel-config-go](https://github.com/honeycombio/otel-config-go) library, which provides a straightforward method to configure observability through environment variables.
+
+<Note>
+  Gate automatically initializes OpenTelemetry with sensible defaults. You only need to configure the endpoints and credentials for your observability backend.
+</Note>
+
+## Architecture
+
+The typical Gate observability setup follows this architecture:
+
+```
+Gate → OpenTelemetry Collector → Observability Backends
+                                  ├── Prometheus (Metrics)
+                                  ├── Tempo/Jaeger (Traces)
+                                  └── Loki (Logs)
+```
+
+Gate emits telemetry data using the OpenTelemetry Protocol (OTLP), which can be sent to:
+- **OpenTelemetry Collector** (recommended) - Processes and routes telemetry
+- **Direct backends** - Services like Grafana Cloud, Honeycomb, or Datadog
+- **Self-hosted solutions** - Prometheus, Jaeger, Tempo, etc.
+
+## Configuration
+
+Gate's OpenTelemetry implementation is configured entirely through environment variables, making it easy to integrate with container orchestration platforms and cloud environments.
+
+### Core Settings
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `OTEL_SERVICE_NAME` | `gate` | Name of your service |
+| `OTEL_SERVICE_VERSION` | - | Version of your service |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | Endpoint for OTLP export |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` | Protocol for OTLP (`grpc` or `http/protobuf`) |
+| `OTEL_METRICS_ENABLED` | `false` | Enable metrics collection |
+| `OTEL_TRACES_ENABLED` | `false` | Enable trace collection |
+| `OTEL_LOG_LEVEL` | `info` | OpenTelemetry SDK logging level |
+| `OTEL_PROPAGATORS` | `tracecontext,baggage` | Configured trace propagators |
+
+### Exporter Configuration
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `OTEL_EXPORTER_OTLP_HEADERS` | `{}` | Global headers for OTLP exporter |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `localhost:4317` | Endpoint for trace export |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | `{}` | Headers specific to trace exporter |
+| `OTEL_EXPORTER_OTLP_TRACES_INSECURE` | `false` | Allow insecure trace connections |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | `localhost:4317` | Endpoint for metrics export |
+| `OTEL_EXPORTER_OTLP_METRICS_HEADERS` | `{}` | Headers specific to metrics exporter |
+| `OTEL_EXPORTER_OTLP_METRICS_INSECURE` | `false` | Allow insecure metrics connections |
+| `OTEL_EXPORTER_OTLP_METRICS_PERIOD` | `30s` | Metrics reporting interval |
+
+### Resource Attributes
+
+Use `OTEL_RESOURCE_ATTRIBUTES` to add additional context to your telemetry:
+
+```bash
+# Single attribute
+export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production"
+
+# Multiple attributes
+export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production,cloud.region=us-east-1,service.instance.id=gate-1"
+```
+
+## Quick Start Examples
+
+### Local OpenTelemetry Collector
+
+```bash
+export OTEL_SERVICE_NAME="gate-proxy"
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+export OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
+export OTEL_METRICS_ENABLED="true"
+export OTEL_TRACES_ENABLED="true"
+
+gate
+```
+
+### Grafana Cloud
+
+```bash
+export OTEL_SERVICE_NAME="gate-proxy-prod"
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://otlp-gateway-prod-us-central-0.grafana.net/otlp"
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic <base64_credentials>"
+export OTEL_METRICS_ENABLED="true"
+export OTEL_TRACES_ENABLED="true"
+
+gate
+```
+
+### Honeycomb
+
+```bash
+export OTEL_SERVICE_NAME="gate-proxy"
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.honeycomb.io:443"
+export OTEL_EXPORTER_OTLP_HEADERS="x-honeycomb-team=<your-api-key>"
+export OTEL_METRICS_ENABLED="true"
+export OTEL_TRACES_ENABLED="true"
+
+gate
+```
+
+## Implementation Details
+
+Gate's OpenTelemetry integration is implemented in `pkg/internal/otelutil/otel.go:15`:
+
+```go
+func Init(ctx context.Context) (clean func(), err error) {
+    serviceName := os.Getenv("OTEL_SERVICE_NAME")
+    if serviceName == "" {
+        serviceName = "gate"
+    }
+    
+    otelShutdown, err := otelconfig.ConfigureOpenTelemetry(
+        otelconfig.WithServiceName(serviceName),
+        otelconfig.WithServiceVersion(version.String()),
+        otelconfig.WithMetricsEnabled(os.Getenv("OTEL_METRICS_ENABLED") == "true"),
+        otelconfig.WithTracesEnabled(os.Getenv("OTEL_TRACES_ENABLED") == "true"),
+    )
+    // ...
+}
+```
+
+The SDK automatically:
+- Initializes trace and metric providers
+- Configures OTLP exporters (gRPC or HTTP)
+- Sets up context propagation
+- Handles graceful shutdown
+
+## Best Practices
+
+### 1. Use Meaningful Service Names
+
+```bash
+# Good - Identifies the specific instance and purpose
+export OTEL_SERVICE_NAME="gate-proxy-lobby-us-east"
+
+# Bad - Too generic
+export OTEL_SERVICE_NAME="gate"
+```
+
+### 2. Track Service Versions
+
+```bash
+# Semantic versioning
+export OTEL_SERVICE_VERSION="v1.2.3"
+
+# Git commit hash
+export OTEL_SERVICE_VERSION="$(git rev-parse --short HEAD)"
+
+# Build number
+export OTEL_SERVICE_VERSION="build-${BUILD_NUMBER}"
+```
+
+### 3. Add Deployment Context
+
+```bash
+export OTEL_RESOURCE_ATTRIBUTES="\
+deployment.environment=production,\
+cloud.provider=aws,\
+cloud.region=us-east-1,\
+service.namespace=minecraft,\
+service.instance.id=${HOSTNAME}"
+```
+
+### 4. Secure Production Endpoints
+
+```bash
+# Always use HTTPS in production
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://otel-collector.example.com:4317"
+
+# Use authentication headers
+export OTEL_EXPORTER_OTLP_HEADERS="api-key=${SECRET_API_KEY}"
+```
+
+### 5. Use OpenTelemetry Collector
+
+For production deployments, route telemetry through an OpenTelemetry Collector for:
+- **Batching** - Reduces network overhead
+- **Filtering** - Removes unnecessary data
+- **Enrichment** - Adds metadata and context
+- **Retry logic** - Handles transient failures
+- **Multi-backend support** - Send to multiple destinations
+
+## Observability Solutions
+
+Gate works with any OpenTelemetry-compatible backend:
+
+### Cloud Platforms
+- [Grafana Cloud](https://grafana.com/products/cloud/) - Fully managed with Prometheus, Tempo, and Loki
+- [Honeycomb](https://www.honeycomb.io/) - Observability for debugging complex systems
+- [Datadog](https://www.datadog.com/) - Full-stack monitoring and analytics
+- [New Relic](https://newrelic.com/) - APM and observability platform
+- [Azure Monitor](https://azure.microsoft.com/services/monitor/) - Microsoft cloud monitoring
+- [AWS X-Ray](https://aws.amazon.com/xray/) - AWS distributed tracing
+- [Google Cloud Observability](https://cloud.google.com/products/operations) - GCP monitoring
+
+### Self-Hosted
+- **Metrics**: [Prometheus](https://prometheus.io/), [Grafana Mimir](https://grafana.com/oss/mimir/)
+- **Tracing**: [Jaeger](https://www.jaegertracing.io/), [Grafana Tempo](https://grafana.com/oss/tempo/)
+- **Logs**: [Loki](https://grafana.com/oss/loki/)
+- **Visualization**: [Grafana](https://grafana.com/oss/grafana/)
+
+## Troubleshooting
+
+### No Telemetry Data
+
+1. Verify metrics/traces are enabled:
+   ```bash
+   echo $OTEL_METRICS_ENABLED
+   echo $OTEL_TRACES_ENABLED
+   ```
+
+2. Check the endpoint is reachable:
+   ```bash
+   curl -v http://localhost:4318/v1/traces
+   ```
+
+3. Review Gate logs for OpenTelemetry errors
+
+### Connection Refused
+
+- Ensure the collector/backend is running
+- Verify the endpoint URL and port
+- Check firewall rules
+- For Docker, ensure containers are on the same network
+
+### Authentication Errors
+
+- Verify API keys and tokens are correct
+- Check header format: `key=value` pairs
+- Ensure credentials are base64 encoded if required
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Metrics" icon="chart-line" href="/deployment/observability/metrics">
+    Learn about available metrics and collection
+  </Card>
+  <Card title="Tracing" icon="route" href="/deployment/observability/tracing">
+    Configure distributed tracing for request flows
+  </Card>
+  <Card title="Logging" icon="file-lines" href="/deployment/observability/logging">
+    Set up structured logging and log levels
+  </Card>
+</CardGroup>
+
+## Further Reading
+
+- [OpenTelemetry Documentation](https://opentelemetry.io/docs/)
+- [OTLP Specification](https://opentelemetry.io/docs/specs/otlp/)
+- [otel-config-go Library](https://github.com/honeycombio/otel-config-go)
+- [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)

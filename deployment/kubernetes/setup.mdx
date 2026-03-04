@@ -1,0 +1,287 @@
+---
+title: Kubernetes Setup
+description: Deploy Gate on Kubernetes with proper configuration and prerequisites
+---
+
+## Prerequisites
+
+Before deploying Gate on Kubernetes, ensure you have:
+
+- **Kubernetes cluster** (v1.19 or later)
+- **kubectl** configured to communicate with your cluster
+- **Sufficient cluster resources**:
+  - At least 2 CPU cores and 4GB RAM for production workloads
+  - Storage provisioner for persistent volumes (if using StatefulSets)
+- **Container registry access** to `ghcr.io/minekube/gate`
+- **Kustomize** (optional, for advanced configuration management)
+
+## Available Images
+
+Gate provides two Docker image variants:
+
+### Standard Image (Distroless)
+
+```bash
+ghcr.io/minekube/gate:latest
+```
+
+Based on `gcr.io/distroless/static-debian12`, this is the recommended image for most deployments:
+- Minimal attack surface
+- Smaller image size
+- Better security posture
+- No shell access
+
+### JRE Variant
+
+```bash
+ghcr.io/minekube/gate:latest-jre
+```
+
+Based on `eclipse-temurin:25.0.1_8-jre-alpine`, use this variant if you need:
+- Java plugin support
+- Shell access for debugging
+- Java-based extensions
+
+## Quick Start
+
+### Using Kustomize (Recommended)
+
+The Gate repository includes ready-to-use Kustomize configurations:
+
+```bash
+# Clone the repository or copy the examples
+git clone https://github.com/minekube/gate.git
+cd gate/.examples/kubernetes
+
+# Deploy using Kustomize
+kubectl apply -k .
+```
+
+This deploys:
+- Gate proxy deployment
+- NodePort service (port 32556)
+- ConfigMap for Gate configuration
+- Example backend servers (StatefulSet)
+- Headless service for server discovery
+
+### Verify Deployment
+
+```bash
+# Check deployment status
+kubectl get deployments gate
+
+# Check pods
+kubectl get pods -l app.kubernetes.io/name=gate
+
+# Check service
+kubectl get svc gate
+
+# View logs
+kubectl logs -l app.kubernetes.io/component=proxy --tail=50
+```
+
+## Configuration
+
+### Creating a ConfigMap
+
+Create a ConfigMap with your Gate configuration:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gate-config
+  labels:
+    app.kubernetes.io/name: gate
+data:
+  config.yml: |
+    config:
+      bind: 0.0.0.0:25565
+      servers:
+        lobby: lobby.default.svc.cluster.local:25565
+        survival: survival.default.svc.cluster.local:25565
+        creative: creative.default.svc.cluster.local:25565
+      try:
+        - lobby
+      motd: |
+        &bWelcome to Gate!
+        &7Running on Kubernetes
+```
+
+### Apply Configuration
+
+```bash
+kubectl apply -f gate-config.yaml
+```
+
+## Namespace Organization
+
+For production deployments, use namespaces to organize resources:
+
+```bash
+# Create a namespace
+kubectl create namespace minecraft
+
+# Deploy to the namespace
+kubectl apply -k . -n minecraft
+
+# Set default namespace
+kubectl config set-context --current --namespace=minecraft
+```
+
+## Network Configuration
+
+Gate requires network connectivity to:
+
+1. **External players**: Ingress on port 25565 (TCP)
+2. **Backend servers**: Internal cluster networking
+3. **API endpoints**: If using external authentication/APIs
+
+### DNS Considerations
+
+For Kubernetes service discovery:
+
+```yaml
+config:
+  servers:
+    # Full DNS name for services in the same namespace
+    server-0: server-0.servers.svc.cluster.local:25565
+    
+    # Short name if in same namespace
+    server-1: server-1.servers:25565
+    
+    # Cross-namespace reference
+    hub: hub.production.svc.cluster.local:25565
+```
+
+## Resource Requirements
+
+### Minimal Configuration
+
+```yaml
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "1Gi"
+    cpu: "1000m"
+```
+
+### Production Configuration
+
+```yaml
+resources:
+  requests:
+    memory: "1Gi"
+    cpu: "500m"
+  limits:
+    memory: "2Gi"
+    cpu: "2000m"
+```
+
+Adjust based on:
+- Expected player count
+- Number of backend servers
+- Plugin/extension usage
+- Network throughput
+
+## Security Best Practices
+
+### Pod Security Context
+
+```yaml
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+  capabilities:
+    drop:
+      - ALL
+```
+
+### Network Policies
+
+Restrict network access to Gate:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gate-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: proxy
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 25565
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: server
+      ports:
+        - protocol: TCP
+          port: 25565
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Manifests" icon="file-code" href="/deployment/kubernetes/manifests">
+    Explore complete Kubernetes manifest examples
+  </Card>
+  <Card title="Scaling" icon="chart-line" href="/deployment/kubernetes/scaling">
+    Configure horizontal pod autoscaling and load balancing
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Pod Not Starting
+
+```bash
+# Describe pod for events
+kubectl describe pod <pod-name>
+
+# Check logs
+kubectl logs <pod-name>
+
+# Check if ConfigMap exists
+kubectl get configmap gate-config
+```
+
+### Connection Issues
+
+```bash
+# Test internal connectivity
+kubectl run -it --rm debug --image=busybox --restart=Never -- \
+  nc -zv gate.default.svc.cluster.local 25565
+
+# Check service endpoints
+kubectl get endpoints gate
+```
+
+### Configuration Not Loading
+
+```bash
+# Verify ConfigMap mount
+kubectl exec <pod-name> -- cat /config.yml
+
+# Check for mount issues
+kubectl describe pod <pod-name> | grep -A 10 Mounts
+```

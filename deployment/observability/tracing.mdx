@@ -1,0 +1,498 @@
+---
+title: Distributed Tracing
+description: Debug and monitor Gate proxy with distributed tracing using OpenTelemetry, Jaeger, and Tempo
+---
+
+# Distributed Tracing
+
+Gate supports distributed tracing through OpenTelemetry, allowing you to track requests as they flow through your proxy infrastructure. Tracing helps identify performance bottlenecks, debug connection issues, and understand player request flows.
+
+## Enabling Tracing
+
+Tracing is disabled by default. Enable it using the `OTEL_TRACES_ENABLED` environment variable:
+
+```bash
+export OTEL_TRACES_ENABLED="true"
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+export OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
+
+gate
+```
+
+## Trace Instrumentation
+
+Gate automatically instruments key operations with tracing spans. The instrumentation is implemented throughout the codebase using OpenTelemetry's Go SDK.
+
+### Instrumented Operations
+
+Gate creates traces for the following operations:
+
+#### Proxy Operations (`pkg/edition/java/proxy/proxy.go:XX`)
+
+- **`Proxy.Start`** - Proxy startup and initialization
+- **`HandleConn`** - New player connection handling
+  - Attributes: `net.peer.addr`, `net.peer.port`
+
+#### Authentication (`pkg/edition/java/auth/authenticator.go:XX`)
+
+- **`AuthenticateJoin`** - Player authentication with Mojang
+  - Attributes: `player.username`, `player.uuid`, `player.ip`
+
+#### Network Operations (`pkg/edition/java/netmc/connection.go:XX`)
+
+- **`startReadLoop`** - Packet reading loop
+  - Attributes: `connection.id`, `connection.state`
+- **`HandlePacket`** - Individual packet processing
+  - Attributes: `packet.type`, `packet.size`
+
+#### Server Connections (`pkg/edition/java/proxy/server.go:XX`)
+
+- **`serverConnection.dial`** - Backend server connection
+  - Attributes: `server.name`, `server.address`, `server.port`
+
+### Trace Context Propagation
+
+Gate uses the W3C Trace Context standard for propagation:
+
+```bash
+export OTEL_PROPAGATORS="tracecontext,baggage"
+```
+
+This allows traces to span across:
+- Gate proxy instances
+- Backend servers (if instrumented)
+- External authentication services
+- Custom plugins and middleware
+
+## Configuration
+
+### Basic Setup
+
+```bash
+export OTEL_SERVICE_NAME="gate-proxy"
+export OTEL_TRACES_ENABLED="true"
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+export OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
+```
+
+### Advanced Configuration
+
+```bash
+# Service identification
+export OTEL_SERVICE_NAME="gate-proxy-lobby"
+export OTEL_SERVICE_VERSION="v1.2.3"
+
+# Trace-specific endpoint (if different from metrics)
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="http://tempo:4318"
+
+# Trace propagation
+export OTEL_PROPAGATORS="tracecontext,baggage,b3"
+
+# Resource attributes
+export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production,cloud.region=us-east-1"
+```
+
+### Sampling Configuration
+
+Control trace sampling to manage volume and costs:
+
+```bash
+# Sample 10% of traces (default is 100%)
+export OTEL_TRACES_SAMPLER="parentbased_traceidratio"
+export OTEL_TRACES_SAMPLER_ARG="0.1"
+```
+
+Sampling options:
+- `always_on` - Sample all traces (default)
+- `always_off` - Sample no traces
+- `traceidratio` - Sample based on trace ID ratio
+- `parentbased_always_on` - Respect parent sampling decision, otherwise always sample
+- `parentbased_traceidratio` - Respect parent, otherwise sample by ratio
+
+## Backend Integration
+
+### Jaeger
+
+Jaeger is a popular open-source distributed tracing system.
+
+#### Direct to Jaeger
+
+```bash
+export OTEL_TRACES_ENABLED="true"
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://jaeger:4318"
+export OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
+```
+
+#### Via OpenTelemetry Collector
+
+```yaml
+# otel-collector-config.yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+
+exporters:
+  jaeger:
+    endpoint: jaeger:14250
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [jaeger]
+```
+
+#### Docker Compose with Jaeger
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    environment:
+      - OTEL_SERVICE_NAME=gate-proxy
+      - OTEL_TRACES_ENABLED=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+    networks:
+      - tracing
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4318:4318"
+    networks:
+      - tracing
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14250:14250"  # gRPC
+    networks:
+      - tracing
+
+networks:
+  tracing:
+```
+
+Access Jaeger UI at `http://localhost:16686`
+
+### Grafana Tempo
+
+Tempo is Grafana's high-scale distributed tracing backend.
+
+#### Configuration
+
+```yaml
+# otel-collector-config.yaml
+exporters:
+  otlp:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp]
+```
+
+#### Docker Compose with Tempo
+
+```yaml
+services:
+  tempo:
+    image: grafana/tempo:latest
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml
+      - tempo-data:/tmp/tempo
+    ports:
+      - "3200:3200"   # Tempo
+      - "4317:4317"   # OTLP gRPC
+    networks:
+      - tracing
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    volumes:
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yaml
+    ports:
+      - "3000:3000"
+    networks:
+      - tracing
+
+volumes:
+  tempo-data:
+
+networks:
+  tracing:
+```
+
+#### Tempo Configuration
+
+```yaml
+# tempo.yaml
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 1h
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /tmp/tempo/wal
+    local:
+      path: /tmp/tempo/blocks
+```
+
+### Grafana Cloud
+
+```bash
+export OTEL_TRACES_ENABLED="true"
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://tempo-prod-XX-prod-XX-XXXXX.grafana.net/tempo"
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic <base64_credentials>"
+```
+
+Get credentials from your Grafana Cloud stack settings.
+
+### Honeycomb
+
+```bash
+export OTEL_TRACES_ENABLED="true"
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.honeycomb.io:443"
+export OTEL_EXPORTER_OTLP_HEADERS="x-honeycomb-team=<your-api-key>"
+```
+
+## Trace Analysis
+
+### Understanding Trace Structure
+
+A typical player connection trace shows:
+
+```
+Proxy.Start (root span)
+├── HandleConn
+│   ├── AuthenticateJoin
+│   │   └── HTTP Request to Mojang
+│   └── serverConnection.dial
+│       ├── TCP Connection
+│       └── Handshake
+└── startReadLoop
+    └── HandlePacket (multiple spans)
+```
+
+### Example Queries
+
+#### Jaeger UI
+
+- **Find slow connections**: Filter by duration > 1s
+- **Search by player**: Use tag `player.username=<name>`
+- **Error traces**: Filter by tag `error=true`
+- **By operation**: Select operation like `AuthenticateJoin`
+
+#### Grafana with Tempo
+
+```promql
+# Find traces by service
+{service.name="gate-proxy"}
+
+# Find slow authentication
+{service.name="gate-proxy" && name="AuthenticateJoin" && duration>1s}
+
+# Find errors
+{service.name="gate-proxy" && status=error}
+
+# By resource attribute
+{deployment.environment="production" && cloud.region="us-east-1"}
+```
+
+### Common Patterns
+
+#### Slow Player Connections
+
+Look for high duration in:
+- `AuthenticateJoin` - Mojang API slowness
+- `serverConnection.dial` - Backend server latency
+- `HandlePacket` - Packet processing issues
+
+#### Connection Failures
+
+Check for error status in:
+- `HandleConn` - Initial connection problems
+- `AuthenticateJoin` - Authentication failures
+- `serverConnection.dial` - Backend unreachable
+
+## Trace Correlation
+
+### Linking Traces to Metrics
+
+Use exemplars to link metrics to traces in Grafana:
+
+```promql
+rate(gate_player_count[5m])
+```
+
+Click on a data point to see associated traces.
+
+### Linking Traces to Logs
+
+Gate automatically includes trace context in logs when using structured logging:
+
+```json
+{
+  "level": "info",
+  "msg": "player connected",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "span_id": "00f067aa0ba902b7"
+}
+```
+
+Search logs by trace ID to find related log entries.
+
+## Custom Tracing
+
+Add custom spans in your Gate plugins:
+
+```go
+import (
+    "context"
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/attribute"
+    "go.opentelemetry.io/otel/trace"
+)
+
+var tracer = otel.Tracer("my-plugin")
+
+func handlePlayerEvent(ctx context.Context, player Player) error {
+    ctx, span := tracer.Start(ctx, "HandlePlayerEvent",
+        trace.WithAttributes(
+            attribute.String("player.name", player.Name),
+            attribute.String("player.uuid", player.UUID),
+            attribute.String("event.type", "join"),
+        ),
+    )
+    defer span.End()
+    
+    // Your logic here
+    if err := doSomething(ctx); err != nil {
+        span.RecordError(err)
+        span.SetStatus(codes.Error, err.Error())
+        return err
+    }
+    
+    span.SetAttributes(
+        attribute.Int("processed.count", 42),
+    )
+    
+    return nil
+}
+```
+
+## Performance Considerations
+
+### Overhead
+
+- Tracing adds ~1-2% CPU overhead when enabled
+- Memory impact: ~100-200 bytes per span
+- Network: Traces are batched and compressed
+
+### Optimization Tips
+
+1. **Use sampling** for high-traffic proxies:
+   ```bash
+   export OTEL_TRACES_SAMPLER_ARG="0.1"  # 10% sampling
+   ```
+
+2. **Batch traces** in the collector:
+   ```yaml
+   processors:
+     batch:
+       timeout: 10s
+       send_batch_size: 2048
+   ```
+
+3. **Filter unnecessary spans**:
+   ```yaml
+   processors:
+     filter:
+       spans:
+         exclude:
+           match_type: regexp
+           span_names: ["^HealthCheck$"]
+   ```
+
+## Troubleshooting
+
+### No Traces Appearing
+
+1. Verify tracing is enabled:
+   ```bash
+   echo $OTEL_TRACES_ENABLED
+   ```
+
+2. Test the endpoint:
+   ```bash
+   curl -X POST http://localhost:4318/v1/traces \
+     -H "Content-Type: application/x-protobuf"
+   ```
+
+3. Check Gate logs for trace export errors
+
+### Incomplete Traces
+
+- Ensure all services use the same propagation format
+- Verify trace context is passed through middleware
+- Check for trace context being lost at service boundaries
+
+### High Trace Volume
+
+- Implement sampling: `OTEL_TRACES_SAMPLER_ARG`
+- Use tail-based sampling in the collector
+- Filter low-value spans
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Metrics" icon="chart-line" href="/deployment/observability/metrics">
+    Monitor proxy performance with metrics
+  </Card>
+  <Card title="Logging" icon="file-lines" href="/deployment/observability/logging">
+    Configure structured logging
+  </Card>
+</CardGroup>

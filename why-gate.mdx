@@ -1,0 +1,466 @@
+---
+title: Why Gate?
+description: Discover why Gate is the modern choice for Minecraft proxy servers with cloud-native design, minimal resource usage, and built-in cross-play support.
+---
+
+## Modern Architecture, Modern Performance
+
+Gate is built from the ground up as a **modern, cloud-native Minecraft proxy** designed for today's infrastructure and tomorrow's scale.
+
+### Minimal Resource Footprint
+
+<Card>
+  Gate uses approximately **10MB of RAM** in typical operation - that's 5-10x less than traditional Java-based proxies.
+  
+  ```bash
+  # Typical memory usage
+  Gate:        ~10 MB
+  BungeeCord:  ~50-100 MB
+  Velocity:    ~50-100 MB
+  ```
+</Card>
+
+<Note>
+  Lower memory usage means you can run more services on the same hardware, reduce cloud costs, and deploy efficiently even on resource-constrained environments.
+</Note>
+
+### Single Binary Distribution
+
+No runtime dependencies. No version conflicts. Just download and run:
+
+<CodeGroup>
+```bash Linux/macOS
+# Install Gate
+curl -fsSL https://gate.minekube.com/install | bash
+
+# Run it
+gate
+```
+
+```powershell Windows
+# Install Gate
+powershell -c "irm https://gate.minekube.com/install.ps1 | iex"
+
+# Run it
+gate
+```
+
+```bash Go
+# Run directly with Go
+go run go.minekube.com/gate@latest
+```
+
+```bash Docker
+# Or use Docker
+docker run -p 25565:25565 ghcr.io/minekube/gate:latest
+```
+</CodeGroup>
+
+<Info>
+  **No Java required.** Gate is a standalone binary compiled from Go - just copy and run.
+</Info>
+
+## Key Advantages
+
+<CardGroup cols={2}>
+  <Card title="Cloud-Native Design" icon="cloud">
+    Built for modern infrastructure:
+    - Native Kubernetes support
+    - Health checks and readiness probes
+    - Prometheus metrics
+    - Graceful shutdown
+    - Configuration hot-reload
+  </Card>
+  
+  <Card title="Built-in Bedrock Support" icon="mobile">
+    Zero-plugin cross-play:
+    - Integrated Geyser & Floodgate
+    - Managed or manual modes
+    - No backend plugins needed
+    - Java + Bedrock on same network
+  </Card>
+  
+  <Card title="Broad Version Support" icon="timeline">
+    Support for Minecraft versions:
+    - 1.7.2 to latest (1.21+)
+    - Forge mod support
+    - BungeeCord compatibility
+    - Velocity forwarding
+  </Card>
+  
+  <Card title="Lite Mode" icon="bolt">
+    Lightweight reverse proxy:
+    - Route by hostname/domain
+    - Minimal overhead
+    - Multiple load balancing strategies
+    - Proxy-behind-proxy setups
+  </Card>
+</CardGroup>
+
+## Performance & Efficiency
+
+### Powered by Go
+
+Gate is written in [Go](https://go.dev/), Google's modern systems programming language that powers infrastructure at the world's largest companies:
+
+<CardGroup cols={3}>
+  <Card title="Fast Compilation" icon="bolt">
+    Build and deploy in seconds, not minutes
+  </Card>
+  
+  <Card title="Excellent Concurrency" icon="network-wired">
+    Handle thousands of connections efficiently with goroutines
+  </Card>
+  
+  <Card title="Modern Tooling" icon="wrench">
+    Simple dependency management with Go modules
+  </Card>
+</CardGroup>
+
+<Info>
+  Go is used by Google, Microsoft, Meta, Amazon, Netflix, Uber, Twitch, Dropbox, Docker, Kubernetes, and thousands of other companies for production infrastructure.
+</Info>
+
+### Real-World Performance
+
+From `pkg/gate/gate.go:1-407`, Gate's core architecture is designed for efficiency:
+
+```go Gate's Core Design
+// Gate runs multiple proxy editions in parallel
+type Gate struct {
+    javaProxy    *jproxy.Proxy      // Java edition proxy
+    bedrockProxy *bproxy.Proxy      // Bedrock edition proxy  
+    proc         process.Collection // Parallel running processes
+}
+
+// Efficient event system
+eventMgr := event.New(event.WithLogger(log.WithName("event")))
+
+// Context-based lifecycle management
+func (g *Gate) Start(ctx context.Context) error {
+    return g.proc.Start(ctx)
+}
+```
+
+This architecture enables:
+- **Parallel processing** of Java and Bedrock connections
+- **Event-driven plugins** with minimal overhead  
+- **Graceful shutdown** via context cancellation
+- **Hot configuration reload** without downtime
+
+## Deployment Flexibility
+
+Gate runs anywhere:
+
+<Tabs>
+  <Tab title="Local Development">
+    Perfect for testing:
+    
+    ```bash
+    # Download and run
+    gate
+    
+    # Or with Go
+    go run go.minekube.com/gate@latest
+    ```
+  </Tab>
+  
+  <Tab title="Docker">
+    Production containers:
+    
+    ```yaml docker-compose.yml
+    services:
+      gate:
+        image: ghcr.io/minekube/gate:latest
+        ports:
+          - "25565:25565"
+        volumes:
+          - ./config.yml:/config.yml
+        restart: unless-stopped
+    ```
+  </Tab>
+  
+  <Tab title="Kubernetes">
+    Cloud-native scaling:
+    
+    ```yaml deployment.yml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: gate-proxy
+    spec:
+      replicas: 3
+      template:
+        spec:
+          containers:
+          - name: gate
+            image: ghcr.io/minekube/gate:latest
+            ports:
+            - containerPort: 25565
+            livenessProbe:
+              tcpSocket:
+                port: 25565
+    ```
+  </Tab>
+  
+  <Tab title="Bare Metal">
+    Traditional servers:
+    
+    ```bash
+    # Install as systemd service
+    sudo systemctl enable gate
+    sudo systemctl start gate
+    ```
+  </Tab>
+</Tabs>
+
+## Feature Comparison
+
+<Note>
+  This comparison is objective and based on design differences between the projects.
+</Note>
+
+| Feature | Gate | BungeeCord | Velocity |
+|---------|------|------------|----------|
+| **Language** | Go | Java | Java |
+| **Memory Usage** | ~10MB | ~50-100MB | ~50-100MB |
+| **Startup Time** | Less than 1s | 2-5s | 2-5s |
+| **Single Binary** | ✅ Yes | ❌ Requires Java | ❌ Requires Java |
+| **Version Support** | 1.7 - Latest | 1.7 - Latest | 1.7 - Latest |
+| **Forge Support** | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Plugin System** | Go SDK | Java Plugins | Java Plugins |
+| **Bedrock Built-in** | ✅ Yes | ❌ No | ❌ No |
+| **Lite Mode** | ✅ Yes | ❌ No | ❌ No |
+| **Kubernetes Ready** | ✅ Yes | Manual | Manual |
+| **Config Hot-Reload** | ✅ Yes | ❌ No | Partial |
+| **Metrics/Observability** | ✅ Built-in | Plugin | Plugin |
+| **Cloud Deployment** | ✅ Native | Manual | Manual |
+
+## Built-in Cross-Play
+
+Gate includes **integrated Geyser and Floodgate** for Bedrock Edition support:
+
+<Steps>
+  <Step title="Enable in Config">
+    ```yaml config.yml
+    config:
+      bedrock:
+        enabled: true
+        managed: true  # Gate manages Geyser for you
+    ```
+  </Step>
+  
+  <Step title="Start Gate">
+    ```bash
+    gate
+    ```
+    
+    Gate automatically:
+    - Downloads Geyser Standalone
+    - Generates Floodgate encryption keys
+    - Configures Geyser to connect to Gate
+    - Starts Geyser process
+  </Step>
+  
+  <Step title="Players Connect">
+    - **Java players**: Connect to port `25565`
+    - **Bedrock players**: Connect to port `19132`
+    
+    Both play together on the same backend servers!
+  </Step>
+</Steps>
+
+<Info>
+  No plugins needed on backend servers. Gate handles all Bedrock protocol translation at the proxy layer.
+</Info>
+
+See the [Bedrock Guide](/guide/bedrock) for more details.
+
+## Lite Mode - Unique to Gate
+
+Gate Lite Mode is a **lightweight reverse proxy** that routes connections based on the hostname players connect with:
+
+```yaml config.yml
+config:
+  lite:
+    enabled: true
+    routes:
+      - host: "survival.example.com"
+        backend: "10.0.0.10:25565"
+      
+      - host: "creative.example.com"
+        backend: "10.0.0.11:25565"
+      
+      - host: "*.minigames.example.com"
+        backend: "$1.k8s.svc:25565"  # Dynamic routing
+        strategy: least-connections    # Load balancing
+```
+
+Perfect for:
+- Simple reverse proxy setups
+- Proxy-behind-proxy architectures  
+- Minimal overhead routing
+- Dynamic Kubernetes service routing
+
+See the [Lite Mode Guide](/guide/lite) for more information.
+
+## Developer Experience
+
+Gate is designed for developers who want to **extend and customize** their proxy:
+
+### Go SDK
+
+Build plugins in Go with a clean, documented API:
+
+```go example-plugin.go
+package main
+
+import (
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+    "go.minekube.com/gate/pkg/gate"
+)
+
+func main() {
+    proxy.Plugins = append(proxy.Plugins, proxy.Plugin{
+        Name: "MyPlugin",
+        Init: func(ctx context.Context, proxy *proxy.Proxy) error {
+            // Listen for player join events
+            proxy.Event().Subscribe(&PlayerJoinEvent{}, func(e *PlayerJoinEvent) {
+                e.Player().SendMessage("Welcome to the server!")
+            })
+            return nil
+        },
+    })
+    
+    gate.Execute()
+}
+```
+
+<CardGroup cols={2}>
+  <Card title="Type Safety" icon="shield">
+    Compile-time checks catch errors before deployment
+  </Card>
+  
+  <Card title="Fast Iteration" icon="bolt">
+    Rebuild and test in seconds
+  </Card>
+  
+  <Card title="Rich Ecosystem" icon="box">
+    Access Go's vast library ecosystem
+  </Card>
+  
+  <Card title="Easy Debugging" icon="bug">
+    Use standard Go debugging tools
+  </Card>
+</CardGroup>
+
+See the [Developer Guide](/developers) to get started.
+
+## Who Should Use Gate?
+
+<CardGroup cols={2}>
+  <Card title="✅ Great For" icon="circle-check">
+    - **New networks** starting fresh
+    - **Go developers** wanting to use Go
+    - **Cloud deployments** on Kubernetes/Docker
+    - **Resource-constrained** environments
+    - **Cross-play networks** (Java + Bedrock)
+    - Networks needing **custom proxy logic**
+    - **High-performance** requirements
+  </Card>
+  
+  <Card title="⚠️ Consider Alternatives If" icon="triangle-exclamation">
+    - You have **existing Java plugins** you depend on
+    - Your team only knows **Java** (not Go)
+    - You need **SpigotMC plugins** at proxy level
+    - You require specific **BungeeCord plugins**
+    
+    Gate doesn't support Java plugins from BungeeCord or Velocity.
+  </Card>
+</CardGroup>
+
+## Security & Stability
+
+<CardGroup cols={2}>
+  <Card title="Modern Forwarding" icon="shield">
+    Support for:
+    - Velocity Modern forwarding (recommended)
+    - BungeeCord Legacy forwarding
+    - BungeeGuard secret protection
+    - Proxy Protocol (HAProxy)
+  </Card>
+  
+  <Card title="Rate Limiting" icon="gauge">
+    Built-in protection:
+    - Connection rate limiting
+    - Login attempt throttling  
+    - IP-based quota system
+    - Configurable thresholds
+  </Card>
+  
+  <Card title="Active Development" icon="code-commit">
+    - Regular updates and releases
+    - Active community on Discord
+    - Responsive issue tracking
+    - Open source (Apache 2.0)
+  </Card>
+  
+  <Card title="Production Ready" icon="server">
+    - Used by servers worldwide
+    - Extensive testing
+    - Graceful error handling
+    - Comprehensive logging
+  </Card>
+</CardGroup>
+
+## Community & Support
+
+<Card title="Get Help" icon="discord">
+  Join our community:
+  
+  - **Discord**: [discord.gg/6vMDqWE](https://discord.gg/6vMDqWE)
+  - **GitHub**: [github.com/minekube/gate](https://github.com/minekube/gate)
+  - **Documentation**: [gate.minekube.com](https://gate.minekube.com)
+</Card>
+
+## Getting Started
+
+Ready to try Gate?
+
+<Steps>
+  <Step title="Install Gate">
+    ```bash
+    curl -fsSL https://gate.minekube.com/install | bash
+    ```
+  </Step>
+  
+  <Step title="Create Config">
+    ```bash
+    gate config -t simple -w
+    ```
+  </Step>
+  
+  <Step title="Start Gate">
+    ```bash
+    gate
+    ```
+  </Step>
+</Steps>
+
+<CardGroup cols={2}>
+  <Card title="Quick Start Guide" icon="rocket" href="/quickstart">
+    Complete setup walkthrough
+  </Card>
+  
+  <Card title="Configuration Reference" icon="gear" href="/guide/config">
+    All configuration options
+  </Card>
+  
+  <Card title="Developer Guide" icon="code" href="/developers">
+    Build custom plugins
+  </Card>
+  
+  <Card title="Example Projects" icon="github" href="https://github.com/minekube/gate-plugin-template">
+    Starter template repository
+  </Card>
+</CardGroup>

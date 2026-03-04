@@ -1,0 +1,395 @@
+---
+title: Deployment Overview
+description: Learn about deployment options and architecture for Gate proxy
+---
+
+Gate is a flexible Minecraft proxy that can be deployed in various environments, from simple Docker containers to complex Kubernetes clusters. This guide covers the available deployment options and architectural considerations.
+
+## Deployment Options
+
+Gate supports multiple deployment methods to suit different infrastructure needs:
+
+### Docker Deployment
+
+The simplest way to run Gate in production. Gate provides official Docker images with two variants:
+
+- **Distroless variant** (default): Minimal security-focused image based on Debian
+- **JRE variant**: Includes Java Runtime Environment for plugin support
+
+```bash
+docker pull ghcr.io/minekube/gate:latest
+```
+
+**Use cases:**
+- Quick deployments and testing
+- Single-server setups
+- Development environments
+
+### Docker Compose
+
+Ideal for multi-server networks with Gate as the frontend proxy.
+
+```yaml docker-compose.yml
+version: "3.8"
+
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    container_name: gate
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./config.yml:/config.yml
+    environment:
+      - OTEL_METRICS_ENABLED=true
+      - OTEL_TRACES_ENABLED=true
+  
+  server-0:
+    image: itzg/minecraft-server
+    container_name: server-0
+    environment:
+      EULA: "true"
+      TYPE: "PUFFERFISH"
+      ONLINE_MODE: "false"
+    ports:
+      - "25566:25565"
+    volumes:
+      - ./serverdata0:/data
+    restart: unless-stopped
+```
+
+**Use cases:**
+- Local multi-server networks
+- Development and testing
+- Small to medium production deployments
+
+### Kubernetes
+
+Production-grade orchestration for scalable and resilient deployments.
+
+```yaml deploy.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gate
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: gate
+  template:
+    metadata:
+      labels:
+        app: gate
+    spec:
+      containers:
+        - name: gate
+          image: ghcr.io/minekube/gate:latest
+          ports:
+            - containerPort: 25565
+              name: minecraft
+            - containerPort: 9090
+              name: health
+          volumeMounts:
+            - name: config
+              mountPath: /config.yml
+              subPath: config.yml
+          livenessProbe:
+            grpc:
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            grpc:
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: gate-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gate
+spec:
+  selector:
+    app: gate
+  type: LoadBalancer
+  ports:
+  - port: 25565
+    targetPort: minecraft
+    protocol: TCP
+    name: minecraft
+```
+
+**Use cases:**
+- Large-scale production deployments
+- High availability requirements
+- Auto-scaling needs
+- Multi-region deployments
+
+### Bare Metal / VM
+
+Direct installation on servers or virtual machines.
+
+```bash
+# Download the binary
+wget https://github.com/minekube/gate/releases/latest/download/gate-linux-amd64
+
+# Make it executable
+chmod +x gate-linux-amd64
+
+# Run with config
+./gate-linux-amd64 -config config.yml
+```
+
+**Use cases:**
+- Existing infrastructure
+- Maximum performance requirements
+- Custom system integration
+
+## Architectural Patterns
+
+### Single Proxy Architecture
+
+Simplest deployment with one Gate instance routing to multiple backend servers.
+
+```
+┌─────────┐
+│ Players │
+└────┬────┘
+     │
+     v
+┌─────────┐      ┌──────────┐
+│  Gate   ├─────>│ Server 1 │
+│  Proxy  ├─────>│ Server 2 │
+└─────────┘      │ Server 3 │
+                 └──────────┘
+```
+
+**Pros:**
+- Simple to configure and maintain
+- Low latency
+- Minimal resource overhead
+
+**Cons:**
+- Single point of failure
+- Limited scalability
+
+### High Availability Architecture
+
+Multiple Gate instances behind a load balancer for redundancy.
+
+```
+┌─────────┐
+│ Players │
+└────┬────┘
+     │
+     v
+┌──────────────┐
+│ Load Balancer│
+└──────┬───────┘
+   ┌───┴───┬───────┐
+   v       v       v
+┌─────┐ ┌─────┐ ┌─────┐
+│Gate1│ │Gate2│ │Gate3│
+└──┬──┘ └──┬──┘ └──┬──┘
+   │       │       │
+   └───┬───┴───┬───┘
+       v       v
+   ┌──────────────┐
+   │   Servers    │
+   └──────────────┘
+```
+
+**Pros:**
+- No single point of failure
+- Horizontal scalability
+- Rolling updates possible
+
+**Cons:**
+- More complex setup
+- Requires load balancer
+- Higher resource usage
+
+### Lite Mode Architecture
+
+Gate Lite acts as a lightweight reverse proxy routing by virtual host.
+
+```
+┌──────────────────────┐
+│ play.domain.com      │
+│ lobby.domain.com     │
+│ survival.domain.com  │
+└──────────┬───────────┘
+           │
+           v
+    ┌──────────┐
+    │ Gate Lite│
+    └────┬─────┘
+         │
+    ┌────┴─────────┬───────────┐
+    v              v           v
+┌────────┐    ┌────────┐  ┌────────┐
+│ Lobby  │    │ Survival│  │Creative│
+│ Server │    │ Server  │  │ Server │
+└────────┘    └─────────┘  └────────┘
+```
+
+**Pros:**
+- Minimal overhead
+- Host-based routing
+- Supports proxy-behind-proxy
+
+**Cons:**
+- Limited features (no server switching)
+- Players can't move between servers
+
+## Network Topology
+
+### Edge Deployment
+
+Gate at network edge, directly exposed to internet:
+
+```yaml
+config:
+  bind: 0.0.0.0:25565
+  onlineMode: true
+  forwarding:
+    mode: velocity
+    velocitySecret: ${GATE_VELOCITY_SECRET}
+```
+
+**Security considerations:**
+- Enable rate limiting (quota settings)
+- Use strong forwarding secrets
+- Enable forceKeyAuthentication
+- Configure proper firewall rules
+
+### Behind Load Balancer
+
+Gate behind TCP/Layer 4 load balancer:
+
+```yaml
+config:
+  bind: 0.0.0.0:25565
+  # Enable proxy protocol to preserve client IPs
+  proxyProtocol: true
+  forwarding:
+    mode: velocity
+```
+
+**Load balancer requirements:**
+- TCP (Layer 4) load balancing
+- Support for proxy protocol v2
+- Session persistence (optional)
+- Health checks on port 9090
+
+## Resource Requirements
+
+### Minimum Requirements
+
+- **CPU**: 1 core
+- **RAM**: 512 MB
+- **Network**: 100 Mbps
+- **Storage**: 100 MB
+
+**Suitable for**: Up to 100 concurrent players
+
+### Recommended Production
+
+- **CPU**: 2-4 cores
+- **RAM**: 1-2 GB
+- **Network**: 1 Gbps
+- **Storage**: 1 GB
+
+**Suitable for**: 500-1000 concurrent players
+
+### High Performance
+
+- **CPU**: 4-8 cores
+- **RAM**: 4-8 GB
+- **Network**: 10 Gbps
+- **Storage**: 5 GB
+
+**Suitable for**: 1000+ concurrent players
+
+## Environment Variables
+
+Gate supports configuration through environment variables:
+
+### Core Configuration
+
+```bash
+# Velocity forwarding secret
+GATE_VELOCITY_SECRET=your-secret-here
+
+# BungeeGuard secret
+GATE_BUNGEEGUARD_SECRET=your-secret-here
+```
+
+### Observability
+
+```bash
+# OpenTelemetry configuration
+OTEL_SERVICE_NAME=gate
+OTEL_METRICS_ENABLED=true
+OTEL_TRACES_ENABLED=true
+OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317
+```
+
+### Java/Runtime Options
+
+```bash
+# For JRE variant only
+JAVA_OPTS="-Xmx2G -Xms2G"
+```
+
+## Configuration Management
+
+### ConfigMap (Kubernetes)
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gate-config
+data:
+  config.yml: |
+    config:
+      bind: 0.0.0.0:25565
+      onlineMode: true
+      servers:
+        lobby: lobby-service:25565
+        survival: survival-service:25565
+```
+
+### Docker Volume Mounts
+
+```bash
+docker run -d \
+  -v $(pwd)/config.yml:/config.yml \
+  -p 25565:25565 \
+  ghcr.io/minekube/gate:latest
+```
+
+### File Watching
+
+Gate automatically reloads configuration when the config file changes. To disable:
+
+```yaml
+noAutoReload: true
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Production Checklist" icon="clipboard-check" href="/deployment/production-checklist">
+    Essential steps before going live
+  </Card>
+  <Card title="Monitoring" icon="chart-line" href="/deployment/monitoring">
+    Set up health checks and metrics
+  </Card>
+</CardGroup>

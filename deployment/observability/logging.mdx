@@ -1,0 +1,500 @@
+---
+title: Logging Configuration
+description: Configure structured logging in Gate proxy with Zap logger, log levels, and log aggregation
+---
+
+# Logging Configuration
+
+Gate uses structured logging with Uber's [Zap](https://github.com/uber-go/zap) logger, providing high-performance, leveled logging with structured fields. Logs can be configured via command-line flags and environment variables.
+
+## Log Levels
+
+Gate supports multiple log verbosity levels, controlled by the `--verbosity` flag or `GATE_VERBOSITY` environment variable:
+
+| Verbosity | Level | Use Case |
+|-----------|-------|----------|
+| `0` | Info | Production (default) - Essential operational messages |
+| `1` | Debug | Development - Detailed debugging information |
+| `2+` | Trace | Deep debugging - Very detailed internal operations |
+
+### Setting Log Level
+
+```bash
+# Via command-line flag
+gate --verbosity 1
+
+# Via environment variable
+export GATE_VERBOSITY=1
+gate
+
+# Enable debug mode (sets highest verbosity)
+gate --debug
+export GATE_DEBUG=true
+```
+
+## Configuration
+
+### Command-Line Flags
+
+```bash
+# Verbosity control
+gate --verbosity 2         # Set specific verbosity level
+gate -v 2                  # Short form
+
+# Debug mode (maximum verbosity)
+gate --debug               # Enable debug logging
+gate -d                    # Short form
+
+# Show version
+gate --version             # Display version and exit
+gate -V                    # Short form (Unix convention)
+```
+
+### Environment Variables
+
+```bash
+export GATE_VERBOSITY=1    # Set verbosity level
+export GATE_DEBUG=true     # Enable debug mode
+export GATE_CONFIG="/path/to/config.yml"  # Config file location
+```
+
+### Configuration File
+
+```yaml
+# config.yml
+config:
+  debug: false  # Enable debug mode
+```
+
+## Log Format
+
+Gate uses different log formats depending on the mode:
+
+### Production Format (Default)
+
+JSON-structured logs optimized for machine parsing:
+
+```json
+{
+  "level": "info",
+  "ts": "2024-03-04T10:30:45.123Z",
+  "logger": "gate",
+  "msg": "starting Gate proxy",
+  "version": "v0.28.0"
+}
+```
+
+### Development Format (Debug Mode)
+
+Human-readable console logs with colors:
+
+```
+2024-03-04T10:30:45.123Z  INFO  gate  starting Gate proxy  {"version": "v0.28.0"}
+```
+
+## Logger Implementation
+
+Gate's logger is configured in `cmd/gate/root.go:191`:
+
+```go
+func newLogger(debug bool, v int) (l logr.Logger, err error) {
+    var cfg zap.Config
+    if debug {
+        cfg = zap.NewDevelopmentConfig()
+    } else {
+        cfg = zap.NewProductionConfig()
+    }
+    cfg.Level = zap.NewAtomicLevelAt(zapcore.Level(-v))
+    
+    cfg.Encoding = "console"
+    cfg.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+    cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+    
+    zl, err := cfg.Build()
+    if err != nil {
+        return logr.Discard(), err
+    }
+    
+    return zapr.NewLogger(zl), nil
+}
+```
+
+### Structured Fields
+
+Gate logs include structured fields for easy filtering:
+
+```go
+log.Info("player connected", 
+    "username", player.Name,
+    "uuid", player.UUID,
+    "address", conn.RemoteAddr(),
+)
+```
+
+Output:
+```json
+{
+  "level": "info",
+  "msg": "player connected",
+  "username": "Notch",
+  "uuid": "069a79f4-44e9-4726-a5be-fca90e38aaf5",
+  "address": "192.168.1.100:54321"
+}
+```
+
+## OpenTelemetry Integration
+
+When OpenTelemetry tracing is enabled, logs automatically include trace context:
+
+```bash
+export OTEL_TRACES_ENABLED="true"
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+```
+
+Logs will include trace and span IDs:
+
+```json
+{
+  "level": "info",
+  "msg": "processing packet",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "span_id": "00f067aa0ba902b7"
+}
+```
+
+This enables correlation between logs and traces in observability platforms.
+
+## Log Aggregation
+
+### Grafana Loki
+
+Loki is designed for aggregating logs from multiple sources.
+
+#### Docker Compose with Loki
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    environment:
+      - GATE_VERBOSITY=1
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://localhost:3100/loki/api/v1/push"
+        loki-external-labels: "service=gate,environment=production"
+    networks:
+      - logging
+
+  loki:
+    image: grafana/loki:latest
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+    networks:
+      - logging
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    volumes:
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yaml
+    ports:
+      - "3000:3000"
+    networks:
+      - logging
+
+networks:
+  logging:
+```
+
+#### Loki Configuration
+
+```yaml
+# grafana-datasources.yml
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+```
+
+#### Querying Logs in Grafana
+
+```logql
+# All Gate logs
+{service="gate"}
+
+# Error logs only
+{service="gate"} |= "level=error"
+
+# Player connection logs
+{service="gate"} |= "player connected"
+
+# Logs for specific player
+{service="gate"} | json | username="Notch"
+
+# Logs with trace ID
+{service="gate"} | json | trace_id=~".+"
+```
+
+### Promtail for Log Shipping
+
+Use Promtail to ship logs from files to Loki:
+
+```yaml
+# promtail-config.yml
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: gate
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: gate
+          __path__: /var/log/gate/*.log
+```
+
+### Elasticsearch and Kibana
+
+For Elasticsearch-based log aggregation:
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    environment:
+      - GATE_VERBOSITY=1
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.10.0
+    user: root
+    volumes:
+      - ./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.10.0
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+```
+
+## Best Practices
+
+### 1. Production Logging
+
+```bash
+# Production: Info level, JSON format
+export GATE_VERBOSITY=0
+export GATE_DEBUG=false
+```
+
+Log only essential information:
+- Service startup/shutdown
+- Player connections/disconnections
+- Configuration changes
+- Errors and warnings
+
+### 2. Development Logging
+
+```bash
+# Development: Debug level, console format
+gate --debug --verbosity 2
+```
+
+Includes:
+- Detailed packet information
+- Authentication flows
+- Internal state changes
+- Performance metrics
+
+### 3. Structured Fields
+
+Always use structured fields instead of string formatting:
+
+```go
+// Good - Structured
+log.Info("player joined",
+    "player", player.Name,
+    "server", server.Name,
+    "time", time.Now(),
+)
+
+// Bad - String formatting
+log.Info(fmt.Sprintf("Player %s joined server %s", player.Name, server.Name))
+```
+
+### 4. Log Sampling
+
+For high-frequency events, use sampling to reduce log volume:
+
+```go
+// Log only 10% of packet events
+if rand.Float64() < 0.1 {
+    log.V(1).Info("packet received", "type", packet.Type)
+}
+```
+
+### 5. Sensitive Data
+
+Never log sensitive information:
+
+```go
+// Bad - Logs sensitive data
+log.Info("auth token", "token", authToken)
+
+// Good - Redacted
+log.Info("auth token", "token", "<redacted>")
+```
+
+### 6. Error Context
+
+Include context when logging errors:
+
+```go
+if err := connectToServer(server); err != nil {
+    log.Error(err, "failed to connect to server",
+        "server", server.Name,
+        "attempt", retryCount,
+        "max_retries", maxRetries,
+    )
+}
+```
+
+## Log Rotation
+
+### Using logrotate (Linux)
+
+```bash
+# /etc/logrotate.d/gate
+/var/log/gate/*.log {
+    daily
+    missingok
+    rotate 14
+    compress
+    delaycompress
+    notifempty
+    create 0640 gate gate
+    sharedscripts
+    postrotate
+        systemctl reload gate || true
+    endscript
+}
+```
+
+### Using Docker logging driver
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+        compress: "true"
+```
+
+## Custom Plugin Logging
+
+Use the context logger in your plugins:
+
+```go
+import (
+    "context"
+    "github.com/go-logr/logr"
+)
+
+func MyPluginInit(ctx context.Context) error {
+    log := logr.FromContextOrDiscard(ctx).WithName("my-plugin")
+    
+    log.Info("plugin initialized", "version", "1.0.0")
+    
+    // Debug logging (only shown at verbosity >= 1)
+    log.V(1).Info("debug information", "detail", "value")
+    
+    // Error logging
+    if err := doSomething(); err != nil {
+        log.Error(err, "operation failed", "context", "additional info")
+    }
+    
+    return nil
+}
+```
+
+## Troubleshooting
+
+### No Logs Appearing
+
+1. Check verbosity level:
+   ```bash
+   echo $GATE_VERBOSITY
+   ```
+
+2. Ensure debug mode is not disabled in config:
+   ```yaml
+   config:
+     debug: true  # Enable for development
+   ```
+
+3. Verify logger initialization in Gate startup logs
+
+### Too Many Logs
+
+1. Reduce verbosity:
+   ```bash
+   export GATE_VERBOSITY=0
+   ```
+
+2. Disable debug mode:
+   ```bash
+   unset GATE_DEBUG
+   ```
+
+3. Implement log sampling for high-frequency events
+
+### Logs Not in JSON Format
+
+Gate uses console encoding by default. For JSON logs, you need to modify the logger configuration or use a log shipper to parse console logs.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="OpenTelemetry" icon="diagram-project" href="/deployment/observability/opentelemetry">
+    Set up comprehensive observability
+  </Card>
+  <Card title="Metrics" icon="chart-line" href="/deployment/observability/metrics">
+    Monitor proxy performance metrics
+  </Card>
+</CardGroup>

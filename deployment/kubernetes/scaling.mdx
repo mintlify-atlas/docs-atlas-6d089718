@@ -1,0 +1,693 @@
+---
+title: Scaling and Load Balancing
+description: Configure horizontal pod autoscaling and load balancing for Gate on Kubernetes
+---
+
+## Overview
+
+Gate is designed to scale horizontally, allowing you to handle thousands of concurrent players by adding more proxy instances. This guide covers autoscaling strategies and load balancing configurations.
+
+## Horizontal Pod Autoscaling
+
+### Prerequisites
+
+Ensure the Metrics Server is installed:
+
+```bash
+# Check if metrics-server is running
+kubectl get deployment metrics-server -n kube-system
+
+# If not installed, deploy it
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+```
+
+### CPU-Based Autoscaling
+
+Create an HPA based on CPU utilization:
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gate-hpa
+  labels:
+    app.kubernetes.io/name: gate
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gate
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 2
+          periodSeconds: 30
+      selectPolicy: Max
+```
+
+Apply the HPA:
+
+```bash
+kubectl apply -f gate-hpa.yaml
+
+# Monitor autoscaling
+kubectl get hpa gate-hpa --watch
+```
+
+### Memory-Based Autoscaling
+
+Scale based on memory usage:
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gate-hpa-memory
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gate
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+```
+
+### Combined Metrics
+
+Scale based on multiple metrics:
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gate-hpa-combined
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gate
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    # CPU metric
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    
+    # Memory metric
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  
+  # Advanced scaling behavior
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+      selectPolicy: Max
+```
+
+## Custom Metrics
+
+### Using Prometheus Adapter
+
+Scale based on custom metrics like active player count:
+
+**Install Prometheus and the adapter:**
+
+```bash
+# Add Prometheus Helm repo
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+# Install Prometheus
+helm install prometheus prometheus-community/kube-prometheus-stack
+
+# Install Prometheus Adapter
+helm install prometheus-adapter prometheus-community/prometheus-adapter
+```
+
+**Configure custom metrics:**
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gate-hpa-players
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gate
+  minReplicas: 2
+  maxReplicas: 15
+  metrics:
+    # Scale based on active players per pod
+    - type: Pods
+      pods:
+        metric:
+          name: gate_active_players
+        target:
+          type: AverageValue
+          averageValue: "100"  # 100 players per pod
+```
+
+## Load Balancing Strategies
+
+### NodePort Service
+
+Basic load balancing using NodePort:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: gate
+  labels:
+    app.kubernetes.io/name: gate
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/name: gate
+  ports:
+    - port: 25565
+      targetPort: minecraft
+      protocol: TCP
+      name: minecraft
+      nodePort: 32556
+  # Session affinity for player connections
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+```
+
+<Note>
+NodePort exposes the service on each node's IP at a static port. Use this for testing or when you have external load balancing.
+</Note>
+
+### LoadBalancer Service
+
+Cloud provider load balancer:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: gate
+  labels:
+    app.kubernetes.io/name: gate
+  annotations:
+    # Preserve client source IP
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/name: gate
+  ports:
+    - port: 25565
+      targetPort: minecraft
+      protocol: TCP
+      name: minecraft
+  # Preserve client IP for proper player tracking
+  externalTrafficPolicy: Local
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 7200  # 2 hours
+```
+
+<Warning>
+Using `externalTrafficPolicy: Local` preserves client IPs but may cause uneven load distribution. Consider this trade-off based on your requirements.
+</Warning>
+
+### Cloud-Specific Configurations
+
+#### AWS Network Load Balancer
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: gate
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "3600"
+    # Use internal NLB for private networks
+    # service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/component: proxy
+  ports:
+    - port: 25565
+      targetPort: minecraft
+      protocol: TCP
+```
+
+#### Google Cloud Load Balancer
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: gate
+  annotations:
+    cloud.google.com/load-balancer-type: "External"
+    # For internal load balancer
+    # cloud.google.com/load-balancer-type: "Internal"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/component: proxy
+  ports:
+    - port: 25565
+      targetPort: minecraft
+      protocol: TCP
+```
+
+#### Azure Load Balancer
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: gate
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-tcp-idle-timeout: "30"
+    # For internal load balancer
+    # service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/component: proxy
+  ports:
+    - port: 25565
+      targetPort: minecraft
+      protocol: TCP
+```
+
+## Pod Disruption Budget
+
+Ensure high availability during maintenance:
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gate-pdb
+  labels:
+    app.kubernetes.io/name: gate
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: proxy
+      app.kubernetes.io/name: gate
+```
+
+Alternatively, specify maximum unavailable:
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gate-pdb
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: proxy
+      app.kubernetes.io/name: gate
+```
+
+## Pod Anti-Affinity
+
+Distribute pods across nodes for better resilience:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gate
+spec:
+  replicas: 3
+  template:
+    spec:
+      affinity:
+        # Prefer spreading across nodes
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app.kubernetes.io/component
+                      operator: In
+                      values:
+                        - proxy
+                topologyKey: kubernetes.io/hostname
+        
+        # Require spreading across availability zones
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/component
+                    operator: In
+                    values:
+                      - proxy
+              topologyKey: topology.kubernetes.io/zone
+      
+      containers:
+        - name: gate
+          image: ghcr.io/minekube/gate:latest
+          # ... rest of container spec
+```
+
+## Topology Spread Constraints
+
+Modern alternative to pod anti-affinity:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gate
+spec:
+  template:
+    spec:
+      topologySpreadConstraints:
+        # Spread across nodes
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: proxy
+        
+        # Spread across zones
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: proxy
+      
+      containers:
+        - name: gate
+          # ... container spec
+```
+
+## Monitoring Scaling
+
+### View HPA Status
+
+```bash
+# Watch HPA in real-time
+kubectl get hpa --watch
+
+# Describe HPA for detailed information
+kubectl describe hpa gate-hpa
+
+# View HPA events
+kubectl get events --field-selector involvedObject.name=gate-hpa
+```
+
+### Metrics
+
+```bash
+# View current resource usage
+kubectl top pods -l app.kubernetes.io/component=proxy
+
+# View node resource usage
+kubectl top nodes
+```
+
+## Performance Tuning
+
+### Resource Requests and Limits
+
+Set appropriate resource requests for autoscaling:
+
+```yaml
+resources:
+  requests:
+    memory: "1Gi"
+    cpu: "500m"  # Critical for CPU-based HPA
+  limits:
+    memory: "2Gi"
+    cpu: "2000m"
+```
+
+<Tip>
+HPA calculates target replicas based on resource **requests**, not limits. Ensure requests accurately reflect your baseline requirements.
+</Tip>
+
+### Quality of Service (QoS)
+
+Ensure Guaranteed QoS for stable performance:
+
+```yaml
+resources:
+  requests:
+    memory: "2Gi"
+    cpu: "1000m"
+  limits:
+    memory: "2Gi"  # Same as requests
+    cpu: "1000m"   # Same as requests
+```
+
+## Scaling Best Practices
+
+<Steps>
+  <Step title="Start Conservative">
+    Begin with 2-3 replicas and adjust based on actual load patterns.
+  </Step>
+  
+  <Step title="Monitor Metrics">
+    Track CPU, memory, and player count metrics over time.
+  </Step>
+  
+  <Step title="Set Appropriate Thresholds">
+    Target 60-70% CPU utilization for optimal scaling headroom.
+  </Step>
+  
+  <Step title="Configure Session Affinity">
+    Use ClientIP session affinity to keep players on the same proxy.
+  </Step>
+  
+  <Step title="Implement PDB">
+    Ensure minimum availability during node maintenance.
+  </Step>
+  
+  <Step title="Test Scaling">
+    Simulate load to verify autoscaling behavior before production.
+  </Step>
+</Steps>
+
+## Production Scaling Example
+
+Complete production-ready configuration:
+
+```yaml
+# Deployment with resource limits
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gate
+spec:
+  replicas: 3  # Will be managed by HPA
+  template:
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: proxy
+      
+      containers:
+        - name: gate
+          image: ghcr.io/minekube/gate:latest
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "1500m"
+---
+# HPA configuration
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gate-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gate
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 65
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 25
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 30
+        - type: Pods
+          value: 3
+          periodSeconds: 30
+      selectPolicy: Max
+---
+# Pod Disruption Budget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gate-pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: proxy
+---
+# LoadBalancer Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: gate
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+  selector:
+    app.kubernetes.io/component: proxy
+  ports:
+    - port: 25565
+      targetPort: minecraft
+      protocol: TCP
+```
+
+## Troubleshooting
+
+### HPA Not Scaling
+
+```bash
+# Check metrics availability
+kubectl get --raw /apis/metrics.k8s.io/v1beta1/nodes
+
+# Verify resource requests are set
+kubectl get deployment gate -o jsonpath='{.spec.template.spec.containers[0].resources}'
+
+# Check HPA conditions
+kubectl describe hpa gate-hpa
+```
+
+### Uneven Load Distribution
+
+- Verify session affinity is configured
+- Check external traffic policy setting
+- Review pod anti-affinity rules
+- Examine load balancer configuration
+
+### Pods Not Scaling Down
+
+- Check stabilization window settings
+- Review PDB configuration
+- Verify scale-down policies
+- Check for active player connections
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Monitoring" icon="chart-line" href="/features/monitoring">
+    Set up monitoring and alerting
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/reference">
+    Advanced configuration options
+  </Card>
+</CardGroup>

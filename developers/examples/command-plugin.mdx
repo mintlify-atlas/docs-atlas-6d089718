@@ -1,0 +1,399 @@
+---
+title: Command Plugin Example
+description: Learn how to create commands with arguments, suggestions, and permissions in Gate plugins.
+---
+
+This example demonstrates advanced command handling in Gate, including arguments, tab completion suggestions, and executing complex commands.
+
+## Overview
+
+This example creates commands with:
+- String arguments with phrase support
+- Tab completion suggestions
+- Argument validation and parsing
+- Player-only command restrictions
+- Multiple argument types (literals, strings, integers)
+
+## Complete Example
+
+### Project Structure
+
+```
+command-plugin/
+├── go.mod
+└── main.go
+```
+
+### go.mod
+
+```go go.mod
+module command-plugin
+
+go 1.24
+
+require (
+	go.minekube.com/brigodier v0.0.2
+	go.minekube.com/common v0.3.0
+	go.minekube.com/gate v0.62.3
+)
+```
+
+### main.go
+
+```go main.go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"go.minekube.com/brigodier"
+	"go.minekube.com/common/minecraft/color"
+	"go.minekube.com/common/minecraft/component"
+	"go.minekube.com/common/minecraft/component/codec/legacy"
+	"go.minekube.com/gate/cmd/gate"
+	"go.minekube.com/gate/pkg/command"
+	"go.minekube.com/gate/pkg/edition/java/proxy"
+)
+
+var legacyCodec = &legacy.Legacy{Char: legacy.AmpersandChar}
+
+func main() {
+	proxy.Plugins = append(proxy.Plugins, proxy.Plugin{
+		Name: "CommandPlugin",
+		Init: func(ctx context.Context, p *proxy.Proxy) error {
+			registerCommands(p)
+			return nil
+		},
+	})
+
+	gate.Execute()
+}
+
+func registerCommands(p *proxy.Proxy) {
+	registerBroadcastCommand(p)
+	registerAlertCommand(p)
+	registerServerCommand(p)
+}
+
+// /broadcast <message> - Broadcast a message to all players
+func registerBroadcastCommand(p *proxy.Proxy) {
+	p.Command().Register(
+		brigodier.Literal("broadcast").Then(
+			brigodier.Argument("message", brigodier.StringPhrase).
+				// Add tab completion suggestions
+				Suggests(command.SuggestFunc(func(
+					c *command.Context,
+					b *brigodier.SuggestionsBuilder,
+				) *brigodier.Suggestions {
+					// Suggest personalized messages for players
+					if player, ok := c.Source.(proxy.Player); ok {
+						b.Suggest(fmt.Sprintf("&oI am &6&l%s", player.Username()))
+					}
+					b.Suggest("&eHello everyone!")
+					b.Suggest("&aWelcome to the server")
+					b.Suggest("&cServer will restart in 5 minutes")
+
+					return b.Build()
+				})).
+				Executes(command.Command(func(c *command.Context) error {
+					// Parse the message with legacy color codes
+					message, err := legacyCodec.Unmarshal([]byte(c.String("message")))
+					if err != nil {
+						return c.Source.SendMessage(&component.Text{
+							Content: fmt.Sprintf("Error formatting message: %v", err),
+							S:       component.Style{Color: color.Red},
+						})
+					}
+
+					// Broadcast to all players
+					for _, player := range p.Players() {
+						// Send in goroutine to avoid blocking on slow connections
+						go func(pl proxy.Player) {
+							_ = pl.SendMessage(message)
+						}(player)
+					}
+
+					return c.Source.SendMessage(&component.Text{
+						Content: "Broadcast sent!",
+						S:       component.Style{Color: color.Green},
+					})
+				})),
+		),
+	)
+}
+
+// /alert <player> <message> - Send an alert to a specific player
+func registerAlertCommand(p *proxy.Proxy) {
+	p.Command().Register(
+		brigodier.Literal("alert").Then(
+			brigodier.Argument("player", brigodier.String).
+				// Suggest online player names
+				Suggests(command.SuggestFunc(func(
+					c *command.Context,
+					b *brigodier.SuggestionsBuilder,
+				) *brigodier.Suggestions {
+					for _, player := range p.Players() {
+						b.Suggest(player.Username())
+					}
+					return b.Build()
+				})).
+				Then(
+					brigodier.Argument("message", brigodier.StringPhrase).
+						Executes(command.Command(func(c *command.Context) error {
+							playerName := c.String("player")
+							messageText := c.String("message")
+
+							// Find the target player
+							target := p.Player(playerName)
+							if target == nil {
+								return c.Source.SendMessage(&component.Text{
+									Content: fmt.Sprintf("Player %s not found", playerName),
+									S:       component.Style{Color: color.Red},
+								})
+							}
+
+							// Parse and send the alert
+							message, err := legacyCodec.Unmarshal([]byte(messageText))
+							if err != nil {
+								return c.Source.SendMessage(&component.Text{
+									Content: fmt.Sprintf("Error formatting message: %v", err),
+									S:       component.Style{Color: color.Red},
+								})
+							}
+
+							_ = target.SendMessage(&component.Text{
+								S: component.Style{Color: color.Yellow, Bold: component.True},
+								Extra: []component.Component{
+									&component.Text{Content: "[ALERT] "},
+									message,
+								},
+							})
+
+							return c.Source.SendMessage(&component.Text{
+								Content: fmt.Sprintf("Alert sent to %s", playerName),
+								S:       component.Style{Color: color.Green},
+							})
+						})),
+				),
+		),
+	)
+}
+
+// /server [server] - Connect to a server or list servers
+func registerServerCommand(p *proxy.Proxy) {
+	p.Command().Register(
+		brigodier.Literal("server").
+			// /server with no arguments - list servers
+			Executes(command.Command(func(c *command.Context) error {
+				player, ok := c.Source.(proxy.Player)
+				if !ok {
+					return c.Source.SendMessage(&component.Text{
+						Content: "Only players can use this command",
+						S:       component.Style{Color: color.Red},
+					})
+				}
+
+				servers := p.Servers()
+				if len(servers) == 0 {
+					return player.SendMessage(&component.Text{
+						Content: "No servers available",
+						S:       component.Style{Color: color.Yellow},
+					})
+				}
+
+				msg := &component.Text{
+					Content: "Available servers: ",
+					S:       component.Style{Color: color.Green},
+				}
+
+				for i, server := range servers {
+					if i > 0 {
+						msg.Extra = append(msg.Extra, &component.Text{
+							Content: ", ",
+						})
+					}
+					msg.Extra = append(msg.Extra, &component.Text{
+						Content: server.ServerInfo().Name(),
+						S:       component.Style{Color: color.Aqua},
+					})
+				}
+
+				return player.SendMessage(msg)
+			})).
+			// /server <name> - connect to server
+			Then(
+				brigodier.Argument("name", brigodier.String).
+					// Suggest available servers
+					Suggests(command.SuggestFunc(func(
+						c *command.Context,
+						b *brigodier.SuggestionsBuilder,
+					) *brigodier.Suggestions {
+						for _, server := range p.Servers() {
+							b.Suggest(server.ServerInfo().Name())
+						}
+						return b.Build()
+					})).
+					Executes(command.Command(func(c *command.Context) error {
+						player, ok := c.Source.(proxy.Player)
+						if !ok {
+							return c.Source.SendMessage(&component.Text{
+								Content: "Only players can use this command",
+								S:       component.Style{Color: color.Red},
+							})
+						}
+
+						serverName := c.String("name")
+						server := p.Server(serverName)
+						if server == nil {
+							return player.SendMessage(&component.Text{
+								Content: fmt.Sprintf("Server %s not found", serverName),
+								S:       component.Style{Color: color.Red},
+							})
+						}
+
+						// Connect player to server
+						player.CreateConnectionRequest(server).Connect()
+
+						return nil
+					})),
+			),
+	)
+}
+```
+
+## Building and Running
+
+```bash
+# Initialize module
+go mod init command-plugin
+go mod tidy
+
+# Build
+go build -o command-plugin
+
+# Run
+./command-plugin
+```
+
+## Command Usage
+
+Once running, try these commands in-game:
+
+```
+/broadcast &eHello everyone!
+/alert Steve &cThis is an important message
+/server
+/server lobby
+```
+
+## Key Features Explained
+
+### Argument Types
+
+<CodeGroup>
+```go String Argument
+brigodier.Argument("name", brigodier.String)
+// Captures a single word: /cmd word
+```
+
+```go String Phrase
+brigodier.Argument("message", brigodier.StringPhrase)
+// Captures everything after: /cmd hello world!
+```
+
+```go Integer Argument
+brigodier.Argument("count", brigodier.Integer)
+// Captures an integer: /cmd 42
+```
+</CodeGroup>
+
+### Tab Completion
+
+Provide suggestions to help users:
+
+```go
+Suggests(command.SuggestFunc(func(
+	c *command.Context,
+	b *brigodier.SuggestionsBuilder,
+) *brigodier.Suggestions {
+	b.Suggest("option1")
+	b.Suggest("option2")
+	return b.Build()
+}))
+```
+
+### Legacy Color Codes
+
+Gate supports Minecraft's legacy color codes (`&` format):
+
+```go
+// Parse color codes like &e, &a, &c, etc.
+message, err := legacyCodec.Unmarshal([]byte("&eYellow &aGreen"))
+```
+
+Common codes:
+- `&0-9, a-f` - Colors
+- `&l` - Bold
+- `&m` - Strikethrough
+- `&n` - Underline
+- `&o` - Italic
+- `&r` - Reset
+
+### Player-Only Commands
+
+Restrict commands to players:
+
+```go
+player, ok := c.Source.(proxy.Player)
+if !ok {
+	return c.Source.SendMessage(&component.Text{
+		Content: "Only players can use this command",
+	})
+}
+```
+
+### Command Context
+
+Retrieve arguments from the command context:
+
+```go
+// String arguments
+playerName := c.String("player")
+
+// Integer arguments
+count := c.Int("count")
+
+// Boolean arguments
+enabled := c.Bool("enabled")
+```
+
+## Advanced Topics
+
+<CardGroup cols={2}>
+  <Card title="Command Permissions" icon="lock" href="/developers/commands/permissions">
+    Add permission checks to commands
+  </Card>
+  
+  <Card title="Brigadier API" icon="code" href="/developers/commands/brigadier">
+    Deep dive into Brigadier's command system
+  </Card>
+  
+  <Card title="Command Aliases" icon="link" href="/developers/commands/registration">
+    Register multiple names for commands
+  </Card>
+  
+  <Card title="Custom Arguments" icon="puzzle-piece" href="/developers/commands/brigadier#custom-arguments">
+    Create custom argument types
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+- See [Event Listener Example](/developers/examples/event-listener) for event handling
+- Learn about [Command Overview](/developers/commands/overview)
+- Explore [Simple Plugin Example](/developers/examples/simple-plugin) for basics
+
+<Warning>
+  Always validate user input! Check that players exist, servers are available, and arguments are in valid ranges.
+</Warning>

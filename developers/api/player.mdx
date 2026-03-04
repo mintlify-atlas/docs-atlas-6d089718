@@ -1,0 +1,511 @@
+---
+title: Player API
+description: Interface for interacting with connected Minecraft players
+---
+
+The `Player` interface represents a connected Minecraft player on the proxy. It provides methods for communication, server switching, resource packs, and more.
+
+## Overview
+
+The Player interface extends multiple interfaces:
+- `Inbound` - Connection information
+- `netmc.PacketWriter` - Packet sending capabilities
+- `command.Source` - Command execution source
+- `message.ChannelMessageSource` - Plugin message source
+- `message.ChannelMessageSink` - Plugin message sink
+- `crypto.KeyIdentifiable` - Player key identification
+
+Source: `pkg/edition/java/proxy/player.go:52`
+
+## Getting Players
+
+Retrieve player instances from the proxy:
+
+```go
+import (
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+    "go.minekube.com/gate/pkg/util/uuid"
+)
+
+// Get player by UUID
+playerID := uuid.Must(uuid.Parse("...")
+player := p.Player(playerID)
+
+// Get player by username (case-insensitive)
+player := p.PlayerByName("Notch")
+
+// Get all online players
+players := p.Players()
+```
+
+## Player Information
+
+### Basic Properties
+
+Access player identity and status:
+
+```go
+// Get player UUID
+id := player.ID()
+
+// Get player username
+username := player.Username()
+
+// Get player ping (or -1 if unknown)
+ping := player.Ping()
+
+// Check if authenticated with Mojang
+if player.OnlineMode() {
+    log.Info("player is in online mode")
+}
+
+// Get game profile
+profile := player.GameProfile()
+log.Info("player profile", 
+    "name", profile.Name,
+    "id", profile.ID,
+    "properties", len(profile.Properties),
+)
+```
+
+<ResponseField name="ID" type="uuid.UUID">
+  The player's Minecraft UUID.
+</ResponseField>
+
+<ResponseField name="Username" type="string">
+  The player's Minecraft username.
+</ResponseField>
+
+<ResponseField name="Ping" type="time.Duration">
+  Returns the player's ping, or -1 if currently unknown.
+</ResponseField>
+
+<ResponseField name="OnlineMode" type="bool">
+  Returns true if the player was authenticated with Mojang's session servers.
+</ResponseField>
+
+### Client Information
+
+Get information about the player's client:
+
+```go
+import "go.minekube.com/gate/pkg/edition/java/proxy/player"
+
+// Get client settings
+settings := player.Settings()
+log.Info("client settings",
+    "locale", settings.Locale(),
+    "viewDistance", settings.ViewDistance(),
+    "chatMode", settings.ChatMode(),
+)
+
+// Get client brand (e.g., "vanilla", "fabric")
+brand := player.ClientBrand()
+if brand != "" {
+    log.Info("client brand", "brand", brand)
+}
+```
+
+<ResponseField name="Settings" type="player.Settings">
+  Returns the player's client settings, or `player.DefaultSettings` if unknown.
+</ResponseField>
+
+<ResponseField name="ClientBrand" type="string">
+  Returns the client brand, or empty string if unspecified.
+</ResponseField>
+
+## Messaging
+
+### Sending Chat Messages
+
+Send messages to the player:
+
+```go
+import (
+    "go.minekube.com/common/minecraft/component"
+    "go.minekube.com/gate/pkg/command"
+)
+
+// Send a simple text message
+msg := &component.Text{Content: "Welcome to the server!"}
+err := player.SendMessage(msg)
+
+// Send with custom options
+err = player.SendMessage(msg,
+    proxy.WithMessageType(proxy.SystemMessageType),
+    proxy.WithMessageSender(someUUID),
+)
+```
+
+<ParamField path="msg" type="component.Component" required>
+  The message component to send. Nil messages are ignored.
+</ParamField>
+
+<ParamField path="opts" type="...command.MessageOption">
+  Optional message options like type and sender.
+</ParamField>
+
+### Message Types
+
+Available message types:
+
+```go
+// Standard chat message (can be filtered by client)
+proxy.ChatMessageType
+
+// System message (cannot be dismissed)
+proxy.SystemMessageType  
+
+// Game info message (appears above hotbar)
+proxy.GameInfoMessageType
+```
+
+### Action Bar
+
+Send action bar messages:
+
+```go
+// Send action bar message
+msg := &component.Text{Content: "Health: 20/20"}
+err := player.SendActionBar(msg)
+```
+
+<ParamField path="msg" type="component.Component" required>
+  The action bar message component. Nil messages are ignored.
+</ParamField>
+
+### Spoofing Chat Input
+
+Send chat input as if the player typed it:
+
+```go
+// Make player execute a command
+err := player.SpoofChatInput("/help")
+
+// Make player send a chat message
+err = player.SpoofChatInput("Hello everyone!")
+```
+
+<ParamField path="input" type="string" required>
+  The chat input to spoof. Maximum 256 characters.
+</ParamField>
+
+<ResponseField name="error" type="error">
+  Returns `ErrTooLongChatMessage` if input exceeds 256 characters, or `ErrNoBackendConnection` if player is not connected to a server.
+</ResponseField>
+
+## Server Connection
+
+### Current Server
+
+Get the player's current server:
+
+```go
+// Get current server connection (may be nil)
+currServer := player.CurrentServer()
+if currServer == nil {
+    log.Info("player not connected to any server")
+    return
+}
+
+log.Info("current server",
+    "name", currServer.Server().ServerInfo().Name(),
+    "addr", currServer.Server().ServerInfo().Addr(),
+)
+```
+
+<ResponseField name="ServerConnection" type="ServerConnection">
+  Returns the current server connection, or nil if not connected to any backend server.
+</ResponseField>
+
+### Switching Servers
+
+Connect the player to a different server:
+
+```go
+// Get target server
+target := p.Server("survival")
+if target == nil {
+    return fmt.Errorf("server not found")
+}
+
+// Create connection request
+request := player.CreateConnectionRequest(target)
+
+// Connect and handle result
+result, err := request.Connect(ctx)
+if err != nil {
+    return err
+}
+
+if result.Successful() {
+    log.Info("player connected to server",
+        "player", player.Username(),
+        "server", target.ServerInfo().Name(),
+    )
+} else if result.AttemptedConnection() {
+    // Connection was attempted but failed
+    log.Warn("connection failed", "reason", result.Reason())
+} else {
+    // Connection was denied (e.g., by event handler)
+    log.Info("connection denied")
+}
+```
+
+<ParamField path="target" type="RegisteredServer" required>
+  The target server to connect to.
+</ParamField>
+
+<ResponseField name="ConnectionRequest" type="ConnectionRequest">
+  A connection request builder for switching servers.
+</ResponseField>
+
+## Resource Packs
+
+### Sending Resource Packs
+
+Send a resource pack to the player:
+
+```go
+// Send resource pack
+info := proxy.ResourcePackInfo{
+    URL:    "https://example.com/pack.zip",
+    Hash:   []byte{...}, // 20-byte SHA-1 hash (optional but recommended)
+    Prompt: &component.Text{Content: "Please accept the resource pack"},
+    Required: false,
+}
+
+err := player.SendResourcePack(info)
+if err != nil {
+    log.Error(err, "failed to send resource pack")
+}
+```
+
+<ParamField path="info" type="ResourcePackInfo" required>
+  Resource pack information including URL, hash, prompt, and whether it's required.
+</ParamField>
+
+<ResponseField name="error" type="error">
+  Returns an error if the pack is already applied or if sending fails.
+</ResponseField>
+
+### Tracking Resource Pack Status
+
+Get applied and pending resource packs:
+
+```go
+// Get applied resource packs
+applied := player.AppliedResourcePacks()
+for _, pack := range applied {
+    log.Info("applied pack", "url", pack.URL)
+}
+
+// Get pending resource packs
+pending := player.PendingResourcePacks()
+for _, pack := range pending {
+    log.Info("pending pack", "url", pack.URL)
+}
+```
+
+<ResponseField name="AppliedResourcePacks" type="[]*ResourcePackInfo">
+  All resource packs that were applied and accepted by the player.
+</ResponseField>
+
+<ResponseField name="PendingResourcePacks" type="[]*ResourcePackInfo">
+  All resource packs currently being sent to the player.
+</ResponseField>
+
+## Tab List
+
+Manage the player's tab list:
+
+```go
+import "go.minekube.com/gate/pkg/edition/java/proxy/tablist"
+
+// Get tab list
+tabList := player.TabList()
+
+// Set header and footer
+header := &component.Text{Content: "=== My Server ==="}
+footer := &component.Text{Content: "Players: 10/100"}
+tabList.SetHeaderFooter(header, footer)
+
+// Clear header and footer
+tabList.ClearHeaderFooter()
+```
+
+<ResponseField name="tablist.TabList" type="tablist.TabList">
+  The player's tab list for modification.
+</ResponseField>
+
+## Plugin Messages
+
+Send plugin messages to the player's client:
+
+```go
+import "go.minekube.com/gate/pkg/edition/java/proxy/message"
+
+// Create channel identifier
+channel := message.MinecraftNamespace("mybrand")
+
+// Send plugin message to client
+data := []byte{...}
+err := player.SendPluginMessage(channel, data)
+```
+
+<ParamField path="identifier" type="message.ChannelIdentifier" required>
+  The plugin message channel identifier.
+</ParamField>
+
+<ParamField path="data" type="[]byte" required>
+  The message data to send.
+</ParamField>
+
+<Warning>
+  This sends the message to the player's **client**, not to their current server. To send a message to the server, use `player.CurrentServer().SendPluginMessage()`.
+</Warning>
+
+## Player Transfer
+
+Transfer the player to another server (1.20.5+):
+
+```go
+// Transfer player to another host
+err := player.TransferToHost("play.example.com:25565")
+if err == proxy.ErrTransferUnsupportedClientProtocol {
+    log.Warn("player client version too old for transfer")
+} else if err != nil {
+    return err
+}
+```
+
+<ParamField path="addr" type="string" required>
+  The target address in format "host:port" or just "host" (defaults to port 25565).
+</ParamField>
+
+<ResponseField name="error" type="error">
+  Returns `ErrTransferUnsupportedClientProtocol` if player's client version is below 1.20.5.
+</ResponseField>
+
+## Disconnection
+
+Disconnect the player from the proxy:
+
+```go
+import "go.minekube.com/common/minecraft/component"
+
+// Disconnect with a reason
+reason := &component.Text{
+    Content: "You have been kicked from the server",
+}
+player.Disconnect(reason)
+
+// Disconnect with formatted reason
+reason = &component.Translation{
+    Key: "multiplayer.disconnect.kicked",
+}
+player.Disconnect(reason)
+```
+
+<ParamField path="reason" type="component.Component" required>
+  The disconnect reason to display to the player.
+</ParamField>
+
+<Warning>
+  Once `Disconnect()` is called, further interface calls to this player become undefined.
+</Warning>
+
+## Player Context
+
+Get the player's context for managing operations:
+
+```go
+// Get player context (cancelled when disconnected)
+ctx := player.Context()
+
+// Use context for operations tied to player lifetime
+go func() {
+    <-ctx.Done()
+    log.Info("player disconnected", "name", player.Username())
+}()
+```
+
+<ResponseField name="context.Context" type="context.Context">
+  A context that is cancelled when the player's connection is closed.
+</ResponseField>
+
+## Complete Example
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "time"
+    
+    "go.minekube.com/common/minecraft/component"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+)
+
+func handlePlayerJoin(player proxy.Player, p *proxy.Proxy) {
+    // Welcome message
+    welcome := &component.Text{
+        Content: fmt.Sprintf("Welcome %s!", player.Username()),
+    }
+    player.SendMessage(welcome)
+    
+    // Show player info
+    fmt.Printf("Player joined: %s (%s)\n", 
+        player.Username(), 
+        player.ID(),
+    )
+    fmt.Printf("  Online mode: %v\n", player.OnlineMode())
+    fmt.Printf("  Ping: %v\n", player.Ping())
+    fmt.Printf("  Client brand: %s\n", player.ClientBrand())
+    
+    // Send to lobby server
+    lobby := p.Server("lobby")
+    if lobby != nil {
+        request := player.CreateConnectionRequest(lobby)
+        result, err := request.Connect(context.Background())
+        if err != nil {
+            player.Disconnect(&component.Text{
+                Content: "Failed to connect to lobby",
+            })
+            return
+        }
+        
+        if !result.Successful() {
+            player.Disconnect(&component.Text{
+                Content: "Lobby connection failed",
+            })
+        }
+    }
+    
+    // Show action bar periodically
+    go func() {
+        ticker := time.NewTicker(1 * time.Second)
+        defer ticker.Stop()
+        
+        for {
+            select {
+            case <-player.Context().Done():
+                return
+            case <-ticker.C:
+                msg := &component.Text{
+                    Content: fmt.Sprintf("Ping: %v", player.Ping()),
+                }
+                player.SendActionBar(msg)
+            }
+        }
+    }()
+}
+```
+
+## See Also
+
+- [Proxy API](/developers/api/proxy) - Main proxy interface
+- [Server API](/developers/api/server) - Backend server management
+- [Connection API](/developers/api/connection) - Server connection details
+- [Events Guide](/developers/events) - Player-related events

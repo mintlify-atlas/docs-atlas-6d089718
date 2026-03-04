@@ -1,0 +1,270 @@
+---
+title: "Brigadier Commands"
+description: "Master Brigadier's command parsing and node system for advanced command creation."
+---
+
+# Brigadier Commands
+
+[Brigadier](https://github.com/Mojang/brigadier) is Mojang's command parsing library used by Minecraft and Gate. This guide explains how to use Brigadier effectively.
+
+## Command Nodes
+
+Brigadier commands are built from nodes in a tree structure:
+
+### Literal Nodes
+
+Literal nodes match exact strings:
+
+```go
+brigodier.Literal("server")  // Matches exactly "server"
+```
+
+### Argument Nodes
+
+Argument nodes parse typed values:
+
+```go
+brigodier.Argument("amount", brigodier.Int)       // Parse integer
+brigodier.Argument("player", brigodier.StringWord) // Parse single word
+brigodier.Argument("message", brigodier.GreedyString) // Parse rest of line
+```
+
+## Argument Types
+
+Brigadier provides several built-in argument types:
+
+| Type | Description | Example |
+|------|-------------|----------|
+| `Int` | Integer number | `123`, `-45` |
+| `Long` | Long integer | `123456789` |
+| `Float` | Floating point | `3.14`, `-2.5` |
+| `Double` | Double precision | `3.14159` |
+| `Bool` | Boolean value | `true`, `false` |
+| `StringWord` | Single word | `player1` |
+| `StringPhrase` | Quoted string | `"hello world"` |
+| `GreedyString` | Rest of input | Remaining text |
+
+## Building Command Trees
+
+### Sequential Arguments
+
+Chain arguments with `Then()`:
+
+```go
+cmdManager.Register(
+    brigodier.Literal("give").
+        Then(brigodier.Argument("player", brigodier.StringWord).
+            Then(brigodier.Argument("item", brigodier.StringWord).
+                Then(brigodier.Argument("amount", brigodier.Int).
+                    Executes(command.Command(func(c *command.Context) error {
+                        player := brigodier.String(c.CommandContext, "player")
+                        item := brigodier.String(c.CommandContext, "item")
+                        amount := brigodier.Int(c.CommandContext, "amount")
+                        
+                        // Give item logic
+                        return nil
+                    })),
+                ),
+            ),
+        ),
+)
+```
+
+### Branching Commands
+
+Create multiple paths from a single node:
+
+```go
+serverCmd := brigodier.Literal("server")
+
+// /server <name> - connect to server
+serverCmd.Then(brigodier.Argument("name", brigodier.StringWord).
+    Executes(command.Command(func(c *command.Context) error {
+        serverName := brigodier.String(c.CommandContext, "name")
+        // Connect player to server
+    })),
+)
+
+// /server list - list servers
+serverCmd.Then(brigodier.Literal("list").
+    Executes(command.Command(func(c *command.Context) error {
+        // List all servers
+    })),
+)
+
+cmdManager.Register(serverCmd)
+```
+
+### Optional Arguments
+
+Make arguments optional by adding multiple execution points:
+
+```go
+cmdManager.Register(
+    brigodier.Literal("teleport").
+        Then(brigodier.Argument("target", brigodier.StringWord).
+            Executes(command.Command(func(c *command.Context) error {
+                // Teleport sender to target
+            })).
+            Then(brigodier.Argument("destination", brigodier.StringWord).
+                Executes(command.Command(func(c *command.Context) error {
+                    // Teleport target to destination
+                })),
+            ),
+        ),
+)
+```
+
+This creates:
+- `/teleport <target>` - teleport yourself to target
+- `/teleport <target> <destination>` - teleport target to destination
+
+## Suggestions
+
+Provide tab completion suggestions:
+
+```go
+brigodier.Argument("server", brigodier.StringWord).
+    Suggests(func(ctx context.Context, builder *brigodier.SuggestionsBuilder) *brigodier.Suggestions {
+        remaining := strings.ToLower(builder.Remaining())
+        
+        for _, server := range proxy.Servers() {
+            name := strings.ToLower(server.ServerInfo().Name())
+            if strings.HasPrefix(name, remaining) {
+                builder.Suggest(server.ServerInfo().Name())
+            }
+        }
+        
+        return builder.Build()
+    })
+```
+
+### Contextual Suggestions
+
+Provide different suggestions based on previous arguments:
+
+```go
+brigodier.Argument("action", brigodier.StringWord).
+    Suggests(func(ctx context.Context, builder *brigodier.SuggestionsBuilder) *brigodier.Suggestions {
+        builder.Suggest("add")
+        builder.Suggest("remove")
+        builder.Suggest("list")
+        return builder.Build()
+    }).
+    Then(brigodier.Argument("target", brigodier.StringWord).
+        Suggests(func(ctx context.Context, builder *brigodier.SuggestionsBuilder) *brigodier.Suggestions {
+            // Get previous argument
+            results := builder.Context.(interface{ Results() map[string]interface{} }).Results()
+            action := results["action"].(string)
+            
+            // Suggest based on action
+            if action == "add" || action == "remove" {
+                for _, p := range proxy.Players() {
+                    builder.Suggest(p.Username())
+                }
+            }
+            return builder.Build()
+        }),
+    )
+```
+
+## Redirects
+
+Redirect one command to another:
+
+```go
+lobbyCmd := brigodier.Literal("lobby").
+    Executes(command.Command(func(c *command.Context) error {
+        // Teleport to lobby
+    }))
+
+cmdManager.Register(lobbyCmd)
+
+// Create aliases that redirect to lobby
+cmdManager.Register(
+    brigodier.Literal("hub").Redirect(lobbyCmd),
+)
+cmdManager.Register(
+    brigodier.Literal("spawn").Redirect(lobbyCmd),
+)
+```
+
+## Error Handling
+
+Brigadier provides built-in error types:
+
+```go
+Executes(command.Command(func(c *command.Context) error {
+    amount := brigodier.Int(c.CommandContext, "amount")
+    
+    if amount < 1 || amount > 64 {
+        return errors.New("amount must be between 1 and 64")
+    }
+    
+    // Command logic
+    return nil
+}))
+```
+
+Errors are automatically sent to the command source.
+
+## Advanced Patterns
+
+### Parsing Custom Types
+
+Create custom argument parsers:
+
+```go
+type PlayerArgumentType struct{}
+
+func (p *PlayerArgumentType) Parse(reader *brigodier.StringReader) (interface{}, error) {
+    playerName := reader.ReadStringUntil(' ')
+    player := proxy.Player(playerName)
+    
+    if player == nil {
+        return nil, fmt.Errorf("player %s not found", playerName)
+    }
+    
+    return player, nil
+}
+
+// Use in command
+brigodier.Argument("target", &PlayerArgumentType{}).
+    Executes(command.Command(func(c *command.Context) error {
+        player := c.Argument("target").(proxy.Player)
+        // Use player
+    }))
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Command Structure">
+    - Keep command trees shallow (max 3-4 levels)
+    - Use branching for subcommands instead of long chains
+    - Provide execution points at multiple levels for optional args
+  </Accordion>
+  
+  <Accordion title="Suggestions">
+    - Always filter suggestions based on partial input
+    - Limit suggestions to 20-30 items for performance
+    - Sort suggestions alphabetically for better UX
+  </Accordion>
+  
+  <Accordion title="Argument Naming">
+    - Use descriptive argument names: `player` not `p`
+    - Be consistent across commands
+    - Use snake_case for multi-word names: `max_players`
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Permissions" icon="shield" href="/developers/commands/permissions">
+    Add permission checks to commands
+  </Card>
+  <Card title="Examples" icon="code" href="/developers/examples/command-plugin">
+    See complete command implementations
+  </Card>
+</CardGroup>

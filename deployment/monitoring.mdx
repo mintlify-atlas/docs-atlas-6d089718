@@ -1,0 +1,694 @@
+---
+title: Monitoring & Observability
+description: Configure health checks, metrics, logging, and alerting for Gate proxy
+---
+
+Proper monitoring is essential for maintaining a healthy Gate proxy deployment. This guide covers health checks, metrics collection, logging, and alerting strategies.
+
+## Health Checks
+
+Gate provides a gRPC health service for Kubernetes liveness/readiness probes and load balancer health checks.
+
+### Enabling Health Service
+
+<Steps>
+  <Step title="Configure health service">
+    Enable the gRPC health service in your configuration.
+    
+    ```yaml config.yml
+    healthService:
+      enabled: true
+      bind: 0.0.0.0:9090
+    ```
+    
+    <Info>
+      The health service uses the [gRPC health probe protocol](https://github.com/grpc-ecosystem/grpc-health-probe) standard.
+    </Info>
+  </Step>
+
+  <Step title="Kubernetes probes">
+    Configure liveness and readiness probes in your deployment.
+    
+    ```yaml deployment.yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: gate
+    spec:
+      template:
+        spec:
+          containers:
+            - name: gate
+              image: ghcr.io/minekube/gate:latest
+              ports:
+                - containerPort: 25565
+                  name: minecraft
+                - containerPort: 9090
+                  name: health
+              livenessProbe:
+                grpc:
+                  port: 9090
+                initialDelaySeconds: 10
+                periodSeconds: 10
+                timeoutSeconds: 5
+                failureThreshold: 3
+              readinessProbe:
+                grpc:
+                  port: 9090
+                initialDelaySeconds: 5
+                periodSeconds: 5
+                timeoutSeconds: 3
+                failureThreshold: 2
+    ```
+    
+    **Probe configuration:**
+    - **Liveness**: Restarts pod if Gate becomes unresponsive
+    - **Readiness**: Removes pod from load balancer if not ready
+    - **initialDelaySeconds**: Wait time before first probe
+    - **periodSeconds**: How often to perform the probe
+    - **failureThreshold**: Consecutive failures before action
+  </Step>
+
+  <Step title="Load balancer health checks">
+    Configure your load balancer to use the health endpoint.
+    
+    **AWS Application Load Balancer:**
+    ```hcl terraform
+    resource "aws_lb_target_group" "gate" {
+      name     = "gate-tg"
+      port     = 25565
+      protocol = "TCP"
+      vpc_id   = aws_vpc.main.id
+      
+      health_check {
+        enabled             = true
+        port                = 9090
+        protocol            = "TCP"
+        interval            = 30
+        healthy_threshold   = 2
+        unhealthy_threshold = 2
+      }
+    }
+    ```
+    
+    **Google Cloud Load Balancer:**
+    ```yaml
+    healthCheck:
+      type: grpc
+      grpcHealthCheck:
+        port: 9090
+      checkIntervalSec: 10
+      timeoutSec: 5
+      healthyThreshold: 2
+      unhealthyThreshold: 3
+    ```
+  </Step>
+
+  <Step title="Manual health check">
+    Test health endpoint manually using grpc_health_probe.
+    
+    ```bash
+    # Install grpc_health_probe
+    wget https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/v0.4.19/grpc_health_probe-linux-amd64
+    chmod +x grpc_health_probe-linux-amd64
+    
+    # Check health
+    ./grpc_health_probe-linux-amd64 -addr=localhost:9090
+    
+    # Output: status: SERVING (healthy)
+    # Exit code: 0 (success)
+    ```
+  </Step>
+</Steps>
+
+## Metrics & Telemetry
+
+Gate integrates with OpenTelemetry for comprehensive metrics and distributed tracing.
+
+### OpenTelemetry Configuration
+
+<Steps>
+  <Step title="Enable OpenTelemetry">
+    Configure Gate to export telemetry data.
+    
+    ```yaml docker-compose.yml
+    services:
+      gate:
+        image: ghcr.io/minekube/gate:latest
+        environment:
+          # Service identification
+          - OTEL_SERVICE_NAME=gate-production
+          
+          # Enable metrics and traces
+          - OTEL_METRICS_ENABLED=true
+          - OTEL_TRACES_ENABLED=true
+          
+          # OTLP exporter endpoint
+          - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+          
+          # Optional: Additional resource attributes
+          - OTEL_RESOURCE_ATTRIBUTES=environment=production,region=us-east-1
+    ```
+  </Step>
+
+  <Step title="Deploy OpenTelemetry Collector">
+    Set up a collector to receive and process telemetry.
+    
+    ```yaml otel-collector-config.yaml
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    
+    processors:
+      batch:
+        timeout: 10s
+        send_batch_size: 1024
+      
+      resource:
+        attributes:
+          - key: service.namespace
+            value: minecraft
+            action: insert
+    
+    exporters:
+      # Prometheus for metrics
+      prometheus:
+        endpoint: 0.0.0.0:8889
+        namespace: gate
+      
+      # Jaeger for traces
+      jaeger:
+        endpoint: jaeger:14250
+        tls:
+          insecure: true
+      
+      # Or send to cloud providers
+      # otlp/datadog:
+      #   endpoint: https://api.datadoghq.com
+      # otlp/honeycomb:
+      #   endpoint: https://api.honeycomb.io
+    
+    service:
+      pipelines:
+        metrics:
+          receivers: [otlp]
+          processors: [batch, resource]
+          exporters: [prometheus]
+        traces:
+          receivers: [otlp]
+          processors: [batch, resource]
+          exporters: [jaeger]
+    ```
+  </Step>
+
+  <Step title="Add to Docker Compose">
+    Include the collector in your stack.
+    
+    ```yaml docker-compose.yml
+    services:
+      gate:
+        # ... gate configuration ...
+        environment:
+          - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+        depends_on:
+          - otel-collector
+      
+      otel-collector:
+        image: otel/opentelemetry-collector-contrib:latest
+        command: ["--config=/etc/otel-collector-config.yaml"]
+        volumes:
+          - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+        ports:
+          - "8889:8889"   # Prometheus metrics
+          - "4317:4317"   # OTLP gRPC
+          - "4318:4318"   # OTLP HTTP
+      
+      prometheus:
+        image: prom/prometheus:latest
+        command:
+          - '--config.file=/etc/prometheus/prometheus.yml'
+          - '--storage.tsdb.path=/prometheus'
+        volumes:
+          - ./prometheus.yml:/etc/prometheus/prometheus.yml
+          - prometheus-data:/prometheus
+        ports:
+          - "9090:9090"
+      
+      grafana:
+        image: grafana/grafana:latest
+        environment:
+          - GF_SECURITY_ADMIN_PASSWORD=admin
+        volumes:
+          - grafana-data:/var/lib/grafana
+          - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+          - ./grafana/datasources:/etc/grafana/provisioning/datasources
+        ports:
+          - "3000:3000"
+    
+    volumes:
+      prometheus-data:
+      grafana-data:
+    ```
+  </Step>
+</Steps>
+
+### Key Metrics to Monitor
+
+Gate exports various metrics through OpenTelemetry:
+
+#### Connection Metrics
+
+- **`gate.connections.active`** - Current active player connections
+- **`gate.connections.total`** - Total connections since start
+- **`gate.connections.failed`** - Failed connection attempts
+- **`gate.connections.rate_limited`** - Connections blocked by rate limiting
+
+#### Server Metrics
+
+- **`gate.servers.players`** - Players per backend server
+- **`gate.servers.connection_failures`** - Backend connection failures
+- **`gate.servers.latency`** - Backend server latency
+
+#### Performance Metrics
+
+- **`gate.packets.received`** - Incoming packet count
+- **`gate.packets.sent`** - Outgoing packet count
+- **`gate.bandwidth.in`** - Incoming bandwidth usage
+- **`gate.bandwidth.out`** - Outgoing bandwidth usage
+
+#### System Metrics
+
+- **`process.runtime.go.mem.heap_alloc`** - Memory usage
+- **`process.runtime.go.goroutines`** - Active goroutines
+- **`process.cpu.utilization`** - CPU usage percentage
+
+### Prometheus Configuration
+
+```yaml prometheus.yml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'gate-metrics'
+    static_configs:
+      - targets: ['otel-collector:8889']
+    metric_relabel_configs:
+      # Add custom labels
+      - source_labels: [__name__]
+        target_label: service
+        replacement: gate
+```
+
+### Grafana Dashboards
+
+Create dashboards to visualize Gate metrics:
+
+```json grafana/dashboards/gate-overview.json
+{
+  "dashboard": {
+    "title": "Gate Proxy Overview",
+    "panels": [
+      {
+        "title": "Active Players",
+        "targets": [
+          {
+            "expr": "gate_connections_active",
+            "legendFormat": "Players"
+          }
+        ],
+        "type": "graph"
+      },
+      {
+        "title": "Connection Success Rate",
+        "targets": [
+          {
+            "expr": "rate(gate_connections_total[5m]) - rate(gate_connections_failed[5m])",
+            "legendFormat": "Successful"
+          },
+          {
+            "expr": "rate(gate_connections_failed[5m])",
+            "legendFormat": "Failed"
+          }
+        ],
+        "type": "graph"
+      },
+      {
+        "title": "Backend Server Health",
+        "targets": [
+          {
+            "expr": "gate_servers_players",
+            "legendFormat": "{{server}}"
+          }
+        ],
+        "type": "graph"
+      },
+      {
+        "title": "Memory Usage",
+        "targets": [
+          {
+            "expr": "process_runtime_go_mem_heap_alloc / 1024 / 1024",
+            "legendFormat": "Heap MB"
+          }
+        ],
+        "type": "graph"
+      }
+    ]
+  }
+}
+```
+
+## Logging
+
+Gate outputs structured logs that can be collected and analyzed.
+
+### Log Configuration
+
+```yaml config.yml
+config:
+  # Disable debug logging in production
+  debug: false
+  
+  # Reduce ping request logging
+  status:
+    logPingRequests: false
+```
+
+### Log Collection
+
+<Tabs>
+  <Tab title="Kubernetes">
+    Use a log aggregator like Loki, Elasticsearch, or cloud provider logging.
+    
+    ```yaml fluent-bit-config.yaml
+    [INPUT]
+        Name              tail
+        Path              /var/log/containers/gate-*.log
+        Parser            docker
+        Tag               gate.*
+    
+    [FILTER]
+        Name                parser
+        Match               gate.*
+        Key_Name            log
+        Parser              json
+    
+    [OUTPUT]
+        Name                loki
+        Match               gate.*
+        Host                loki
+        Port                3100
+        Labels              job=gate
+    ```
+  </Tab>
+  
+  <Tab title="Docker">
+    Use Docker logging drivers.
+    
+    ```yaml docker-compose.yml
+    services:
+      gate:
+        image: ghcr.io/minekube/gate:latest
+        logging:
+          driver: "json-file"
+          options:
+            max-size: "10m"
+            max-file: "3"
+            labels: "service=gate,environment=production"
+    ```
+    
+    Or use a centralized logging solution:
+    ```yaml
+    services:
+      gate:
+        logging:
+          driver: "fluentd"
+          options:
+            fluentd-address: localhost:24224
+            tag: gate.{{.Name}}
+    ```
+  </Tab>
+</Tabs>
+
+### Important Log Messages
+
+Monitor for these log patterns:
+
+**Errors:**
+```
+ERROR: Failed to connect to backend server
+ERROR: Authentication failed for player
+ERROR: Rate limit exceeded
+```
+
+**Warnings:**
+```
+WARN: Backend server connection timeout
+WARN: High memory usage detected
+WARN: Invalid forwarding secret
+```
+
+**Info:**
+```
+INFO: Player connected: username (UUID)
+INFO: Player disconnected: username
+INFO: Configuration reloaded
+```
+
+## HTTP API Monitoring
+
+Gate provides an optional HTTP API for monitoring and management.
+
+### Enable API
+
+```yaml config.yml
+api:
+  enabled: true
+  bind: localhost:8080
+```
+
+<Warning>
+  Bind to localhost in production. If external access is needed, use a reverse proxy with authentication.
+</Warning>
+
+### API Endpoints
+
+The Gate API uses gRPC with Connect protocol, accessible via HTTP:
+
+```bash
+# Get server list
+curl http://localhost:8080/minekube.gate.v1.GateService/ListServers
+
+# Get players
+curl http://localhost:8080/minekube.gate.v1.GateService/ListPlayers
+
+# Get server info
+curl http://localhost:8080/minekube.gate.v1.GateService/GetServerInfo \
+  -d '{"server_name": "lobby"}'
+```
+
+### Secure API Access
+
+Use nginx as a reverse proxy with authentication:
+
+```nginx nginx.conf
+server {
+    listen 443 ssl;
+    server_name gate-api.example.com;
+    
+    ssl_certificate /etc/nginx/ssl/cert.pem;
+    ssl_certificate_key /etc/nginx/ssl/key.pem;
+    
+    location / {
+        auth_basic "Gate API";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+        
+        proxy_pass http://localhost:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+## Alerting
+
+Set up alerts for critical conditions.
+
+### Prometheus Alerts
+
+```yaml alerts.yml
+groups:
+  - name: gate-alerts
+    interval: 30s
+    rules:
+      - alert: GateDown
+        expr: up{job="gate-metrics"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Gate proxy is down"
+          description: "Gate has been down for more than 1 minute"
+      
+      - alert: HighConnectionFailureRate
+        expr: rate(gate_connections_failed[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High connection failure rate"
+          description: "{{ $value }} connections failing per second"
+      
+      - alert: BackendServerDown
+        expr: gate_servers_players == 0 AND gate_servers_connection_failures > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Backend server may be down"
+          description: "Server {{ $labels.server }} has no players and connection failures"
+      
+      - alert: HighMemoryUsage
+        expr: process_runtime_go_mem_heap_alloc / 1024 / 1024 > 1500
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value }}MB"
+      
+      - alert: RateLimitingActive
+        expr: rate(gate_connections_rate_limited[5m]) > 5
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "Rate limiting is blocking connections"
+          description: "{{ $value }} connections/sec being rate limited"
+```
+
+### Alert Manager Configuration
+
+```yaml alertmanager.yml
+global:
+  resolve_timeout: 5m
+  slack_api_url: 'https://hooks.slack.com/services/YOUR/WEBHOOK/URL'
+
+route:
+  group_by: ['alertname', 'severity']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 12h
+  receiver: 'slack-notifications'
+  routes:
+    - match:
+        severity: critical
+      receiver: 'pagerduty'
+      continue: true
+
+receivers:
+  - name: 'slack-notifications'
+    slack_configs:
+      - channel: '#minecraft-alerts'
+        title: 'Gate Proxy Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+  
+  - name: 'pagerduty'
+    pagerduty_configs:
+      - service_key: 'YOUR_PAGERDUTY_KEY'
+```
+
+## Distributed Tracing
+
+Use tracing to debug performance issues and understand request flow.
+
+### View Traces in Jaeger
+
+```yaml docker-compose.yml
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14250:14250"  # Jaeger gRPC
+```
+
+Access Jaeger UI at `http://localhost:16686` to:
+- View player connection traces
+- Analyze backend server latency
+- Debug timeout issues
+- Identify bottlenecks
+
+## Monitoring Checklist
+
+Ensure you have:
+
+- [ ] Health checks configured (port 9090)
+- [ ] OpenTelemetry enabled and exporting
+- [ ] Prometheus scraping metrics
+- [ ] Grafana dashboards created
+- [ ] Log aggregation configured
+- [ ] Alerts defined for critical conditions
+- [ ] Alert routing to appropriate channels
+- [ ] On-call rotation established
+- [ ] Runbooks created for common issues
+- [ ] Regular review of metrics and logs
+
+## Troubleshooting
+
+### Health check failing
+
+```bash
+# Check if port is open
+netstat -tlnp | grep 9090
+
+# Test health endpoint
+grpc_health_probe -addr=localhost:9090 -v
+
+# Check Gate logs
+kubectl logs -f deployment/gate
+```
+
+### No metrics appearing
+
+```bash
+# Verify environment variables
+echo $OTEL_METRICS_ENABLED
+echo $OTEL_EXPORTER_OTLP_ENDPOINT
+
+# Check collector logs
+docker logs otel-collector
+
+# Test OTLP endpoint
+curl http://localhost:4317
+```
+
+### High memory usage
+
+```bash
+# Check active connections
+curl http://localhost:8080/minekube.gate.v1.GateService/ListPlayers | jq '.players | length'
+
+# Review compression settings
+grep -A5 compression config.yml
+
+# Check for goroutine leaks
+curl http://localhost:8080/debug/pprof/goroutine
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Production Checklist" icon="clipboard-check" href="/deployment/production-checklist">
+    Complete pre-deployment verification
+  </Card>
+  <Card title="Configuration Reference" icon="book" href="/guide/configuration">
+    Explore all configuration options
+  </Card>
+</CardGroup>

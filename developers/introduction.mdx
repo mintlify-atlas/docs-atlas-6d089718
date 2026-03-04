@@ -1,0 +1,204 @@
+---
+title: "Developer Introduction"
+description: "Get started with Gate's Go API for building Minecraft proxy extensions. Learn why Go and explore Gate's plugin architecture."
+---
+
+# Developer Introduction
+
+Welcome to Gate's developer documentation! If you want to extend Gate with your own code, you're in the right place.
+
+## Why Gate?
+
+Gate is an extensible, high-performance Minecraft proxy server written in Go. It's designed with developers in mind, offering a powerful and flexible API for building custom proxy extensions.
+
+**Key Features:**
+- High performance and parallel execution
+- Cross-platform compatibility (Linux, macOS, Windows)
+- Excellent server version support (Java & Bedrock editions)
+- Cloud-ready architecture
+- Type-safe Go APIs
+
+## Why Go?
+
+Gate is built in Go for several important reasons:
+
+### Performance & Concurrency
+Go's lightweight goroutines and efficient concurrency model make it ideal for handling thousands of concurrent player connections with minimal overhead. The proxy benefits from:
+- Native parallelism across CPU cores
+- Low memory footprint per connection
+- Fast garbage collection tuned for server workloads
+
+### Simplicity & Productivity
+Go's clean syntax and comprehensive standard library enable rapid development:
+- Easy to learn, even for developers new to the language
+- Minimal boilerplate code
+- Excellent tooling (formatting, testing, profiling)
+- Fast compilation times
+
+### Cross-Platform & Deployment
+Go produces static binaries with zero dependencies:
+- Single executable file for deployment
+- No runtime requirements (unlike Java's JVM)
+- Easy cross-compilation for different platforms
+- Perfect for containerized deployments
+
+### Type Safety
+Go's static typing catches errors at compile time:
+- Refactoring is safer and more reliable
+- Better IDE support with autocomplete
+- Self-documenting code through types
+
+## Gate's Plugin Architecture
+
+Gate takes a different approach from traditional Minecraft proxy plugins (like BungeeCord or Velocity). Instead of loading plugins dynamically at runtime, **you create your own Go module, import Gate's APIs, and compile everything together** into a single binary.
+
+### How It Works
+
+```go
+import (
+    "context"
+    "go.minekube.com/gate/cmd/gate"
+    "go.minekube.com/gate/pkg/edition/java/proxy"
+)
+
+func main() {
+    // Register your plugin to be initialized on Gate start
+    proxy.Plugins = append(proxy.Plugins, proxy.Plugin{
+        Name: "MyPlugin",
+        Init: func(ctx context.Context, proxy *proxy.Proxy) error {
+            // Your initialization code here
+            return nil
+        },
+    })
+
+    // Execute Gate entrypoint and block until shutdown
+    gate.Execute()
+}
+```
+
+### Benefits of This Approach
+
+**No Plugin Loading Overhead**: Everything is compiled together, eliminating the complexity and brittleness of dynamic plugin loading.
+
+**Full Control**: You control the entire build process, dependencies, and Gate version. No surprises from incompatible plugin versions.
+
+**Type Safety**: Your code and Gate's APIs are checked together at compile time. No runtime class loading errors.
+
+**Performance**: Direct function calls instead of reflection or plugin interfaces. The compiler can optimize across your code and Gate's code.
+
+**Simplified Distribution**: A single binary contains your proxy and all extensions. Easy to deploy and version.
+
+## Integration Options
+
+Gate offers two main ways to integrate with your applications:
+
+### 1. Native Go Plugin (Recommended)
+
+<Card title="🔌 Native Go Plugin" icon="plug">
+  Import Gate directly into your Go project for maximum performance and flexibility.
+  
+  **Best for:**
+  - Extending Gate's core functionality
+  - Custom proxy implementations
+  - Maximum performance requirements
+  - Full access to internal APIs
+</Card>
+
+**Advantages:**
+- Direct API access to all Gate features
+- In-process execution (fastest possible)
+- Full type safety and compile-time checks
+- Access to internal events and hooks
+
+**Getting Started:**
+- Use the [Plugin Template](/developers/plugin-template) for a quick start
+- Follow the [Project Setup](/developers/project-setup) guide for manual setup
+
+### 2. HTTP API Client
+
+<Card title="🌐 HTTP API Client" icon="globe">
+  Use Gate's HTTP API from any programming language via ConnectRPC.
+  
+  **Best for:**
+  - External integrations
+  - Language-agnostic applications
+  - Microservice architectures
+  - Independent deployment cycles
+</Card>
+
+**Advantages:**
+- Use from any programming language (TypeScript, Python, Rust, Java, Kotlin)
+- Independent versioning and deployment
+- Cross-version compatibility
+- Standard HTTP/REST interface
+
+See the [API documentation](/developers/api) for HTTP client examples.
+
+## What You Can Build
+
+With Gate's APIs, you can create:
+
+**Custom Commands**: Register slash commands that players can use across your network
+
+**Event Handlers**: React to player connections, disconnections, server switches, and more
+
+**Server Management**: Dynamically add/remove backend servers, manage player routing
+
+**Player APIs**: Send messages, titles, boss bars, tab lists, and more to players
+
+**Custom Forwarding**: Implement your own player data forwarding mechanisms
+
+**Metrics & Analytics**: Track player behavior, connection statistics, server health
+
+**Integrations**: Connect to databases, Discord bots, web dashboards, and external services
+
+## Prerequisites
+
+To develop with Gate, you'll need:
+
+1. **Go 1.21 or higher**: [Download Go](https://golang.org/doc/install)
+2. **Basic Go knowledge**: Understanding of Go syntax, modules, and goroutines
+3. **A code editor**: VS Code, GoLand, or your preferred editor
+4. **Git**: For cloning templates and managing dependencies
+
+## Learning Path
+
+<Steps>
+
+<Step title="Explore the Plugin Template">
+  Start with our [plugin template](/developers/plugin-template) to see a complete working example.
+</Step>
+
+<Step title="Set Up Your Project">
+  Follow the [project setup guide](/developers/project-setup) to create your own Gate extension.
+</Step>
+
+<Step title="Learn the APIs">
+  Explore the [Commands](/developers/commands) and [Events](/developers/events) documentation.
+</Step>
+
+<Step title="Study Examples">
+  Check out the [Simple Proxy example](/developers/examples/simple-proxy) for practical patterns.
+</Step>
+
+</Steps>
+
+## Community & Support
+
+- **Discord**: Join our [Discord community](https://discord.gg/6vMDqWE) for help and discussions
+- **GitHub**: Browse [source code](https://github.com/minekube/gate) and report issues
+- **Documentation**: Explore the full [Gate documentation](https://gate.minekube.com)
+- **Go Package Docs**: See the [pkg.go.dev reference](https://pkg.go.dev/go.minekube.com/gate)
+
+## Next Steps
+
+Ready to start building? Choose your path:
+
+<CardGroup cols={2}>
+  <Card title="Use Plugin Template" icon="rocket" href="/developers/plugin-template">
+    Clone the starter template for the fastest way to get started
+  </Card>
+  <Card title="Manual Setup" icon="wrench" href="/developers/project-setup">
+    Create a new Go project from scratch with full control
+  </Card>
+</CardGroup>

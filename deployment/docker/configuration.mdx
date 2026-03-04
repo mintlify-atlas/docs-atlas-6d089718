@@ -1,0 +1,713 @@
+---
+title: Docker Configuration
+description: Advanced Docker configuration for Gate including volumes, networking, and environment variables
+---
+
+This guide covers advanced Docker configuration topics for deploying Gate in production environments.
+
+## Volume Mounts
+
+### Configuration File
+
+The most basic volume mount is for the configuration file:
+
+```bash
+docker run -d \
+  -v $(pwd)/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest
+```
+
+You can also mount it to a custom location:
+
+```bash
+docker run -d \
+  -v /etc/gate/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest
+```
+
+### Data Directory
+
+For persistent data (plugins, extensions, logs):
+
+```bash
+docker run -d \
+  -v $(pwd)/config.yml:/config.yml \
+  -v gate-data:/data \
+  ghcr.io/minekube/gate:latest
+```
+
+### Multiple Configuration Files
+
+If you need to mount additional files:
+
+```bash
+docker run -d \
+  -v $(pwd)/config.yml:/config.yml \
+  -v $(pwd)/plugins:/plugins \
+  -v $(pwd)/extensions:/extensions \
+  ghcr.io/minekube/gate:latest
+```
+
+### Read-Only Mounts
+
+For security, mount configuration as read-only:
+
+```bash
+docker run -d \
+  -v $(pwd)/config.yml:/config.yml:ro \
+  ghcr.io/minekube/gate:latest
+```
+
+### Floodgate Key (Bedrock Support)
+
+When using Bedrock cross-play:
+
+```bash
+docker run -d \
+  -v $(pwd)/config.yml:/config.yml \
+  -v $(pwd)/floodgate.pem:/floodgate.pem \
+  ghcr.io/minekube/gate:latest-jre
+```
+
+## Environment Variables
+
+Gate supports environment variables for sensitive configuration values.
+
+### Velocity Forwarding Secret
+
+```bash
+docker run -d \
+  -v $(pwd)/config.yml:/config.yml \
+  -e GATE_VELOCITY_SECRET=your-secret-here \
+  ghcr.io/minekube/gate:latest
+```
+
+In your `config.yml`:
+
+```yaml
+config:
+  forwarding:
+    mode: velocity
+    # velocitySecret is automatically loaded from GATE_VELOCITY_SECRET
+```
+
+### BungeeGuard Secret
+
+```bash
+docker run -d \
+  -v $(pwd)/config.yml:/config.yml \
+  -e GATE_BUNGEEGUARD_SECRET=your-secret-here \
+  ghcr.io/minekube/gate:latest
+```
+
+### Using Environment Files
+
+Create a `.env` file:
+
+```bash
+GATE_VELOCITY_SECRET=long-random-secret-here
+GATE_BUNGEEGUARD_SECRET=another-secret-here
+```
+
+Then use it:
+
+```bash
+docker run -d \
+  -v $(pwd)/config.yml:/config.yml \
+  --env-file .env \
+  ghcr.io/minekube/gate:latest
+```
+
+With Docker Compose:
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    env_file:
+      - .env
+    volumes:
+      - ./config.yml:/config.yml
+```
+
+## Networking
+
+### Host Network Mode
+
+Best performance, but less isolation:
+
+```bash
+docker run -d \
+  --network host \
+  -v $(pwd)/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest
+```
+
+With Docker Compose:
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    network_mode: host
+    volumes:
+      - ./config.yml:/config.yml
+```
+
+<Warning>
+Host networking gives the container direct access to the host's network stack. Only use in trusted environments.
+</Warning>
+
+### Bridge Network Mode
+
+Better isolation with custom networks:
+
+```bash
+# Create network
+docker network create minecraft-net
+
+# Run Gate
+docker run -d \
+  --name gate \
+  --network minecraft-net \
+  -p 25565:25565 \
+  -v $(pwd)/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest
+
+# Run backend server
+docker run -d \
+  --name backend \
+  --network minecraft-net \
+  itzg/minecraft-server
+```
+
+With Docker Compose:
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    networks:
+      - minecraft
+    ports:
+      - "25565:25565"
+
+  backend:
+    image: itzg/minecraft-server
+    networks:
+      - minecraft
+
+networks:
+  minecraft:
+    driver: bridge
+```
+
+### Internal Networks
+
+Prevent backend servers from accessing the internet:
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    networks:
+      - public
+      - internal
+    ports:
+      - "25565:25565"
+
+  backend:
+    image: itzg/minecraft-server
+    networks:
+      - internal
+
+networks:
+  public:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: true  # No external access
+```
+
+### Custom Port Mappings
+
+```bash
+# Map host port 25575 to container port 25565
+docker run -d \
+  -p 25575:25565 \
+  -v $(pwd)/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest
+```
+
+### Multiple Ports
+
+For Gate API and query protocol:
+
+```bash
+docker run -d \
+  -p 25565:25565 \
+  -p 8080:8080 \
+  -p 25577:25577/udp \
+  -v $(pwd)/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest
+```
+
+With Docker Compose:
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    ports:
+      - "25565:25565"     # Minecraft
+      - "8080:8080"       # API
+      - "25577:25577/udp" # Query
+    volumes:
+      - ./config.yml:/config.yml
+```
+
+### IPv6 Support
+
+Enable IPv6 in Docker:
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    ports:
+      - "25565:25565"
+      - "[::]:25565:25565"  # IPv6
+    volumes:
+      - ./config.yml:/config.yml
+```
+
+## Resource Limits
+
+### Memory Limits
+
+```bash
+docker run -d \
+  --memory="1g" \
+  --memory-swap="1g" \
+  -v $(pwd)/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest
+```
+
+With Docker Compose:
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    volumes:
+      - ./config.yml:/config.yml
+```
+
+### CPU Limits
+
+```bash
+docker run -d \
+  --cpus="2.0" \
+  -v $(pwd)/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest
+```
+
+With Docker Compose:
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+        reservations:
+          cpus: '1.0'
+```
+
+## Security Configuration
+
+### Running as Non-Root User
+
+The distroless image runs as non-root by default. For the JRE variant:
+
+```bash
+docker run -d \
+  --user 1000:1000 \
+  -v $(pwd)/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest-jre
+```
+
+### Read-Only Root Filesystem
+
+```bash
+docker run -d \
+  --read-only \
+  --tmpfs /tmp \
+  -v $(pwd)/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest
+```
+
+### Dropping Capabilities
+
+```bash
+docker run -d \
+  --cap-drop=ALL \
+  --cap-add=NET_BIND_SERVICE \
+  -v $(pwd)/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest
+```
+
+### Security Options with Docker Compose
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ./config.yml:/config.yml:ro
+```
+
+## Logging Configuration
+
+### JSON Logging Driver
+
+```bash
+docker run -d \
+  --log-driver json-file \
+  --log-opt max-size=10m \
+  --log-opt max-file=3 \
+  -v $(pwd)/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest
+```
+
+### Syslog Driver
+
+```bash
+docker run -d \
+  --log-driver syslog \
+  --log-opt syslog-address=tcp://192.168.0.100:514 \
+  -v $(pwd)/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest
+```
+
+### Docker Compose Logging
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "production"
+    volumes:
+      - ./config.yml:/config.yml
+```
+
+## Health Checks
+
+### TCP Health Check
+
+```bash
+docker run -d \
+  --health-cmd="timeout 1 bash -c 'cat < /dev/null > /dev/tcp/localhost/25565'" \
+  --health-interval=30s \
+  --health-timeout=3s \
+  --health-retries=3 \
+  -v $(pwd)/config.yml:/config.yml \
+  ghcr.io/minekube/gate:latest-jre
+```
+
+<Note>
+Health checks require shell utilities, so use the JRE variant.
+</Note>
+
+### Docker Compose Health Check
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest-jre
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c 'cat < /dev/null > /dev/tcp/localhost/25565'"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - ./config.yml:/config.yml
+```
+
+### Using Gate API for Health Checks
+
+If you have the API enabled:
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest-jre
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    volumes:
+      - ./config.yml:/config.yml
+```
+
+## Bedrock Edition (Cross-Play) Setup
+
+For Bedrock cross-play with managed Geyser:
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest-jre  # JRE required for Geyser
+    container_name: gate
+    restart: unless-stopped
+    ports:
+      - "25565:25565"      # Java Edition
+      - "19132:19132/udp"  # Bedrock Edition
+    volumes:
+      - ./config.yml:/config.yml
+      - ./floodgate.pem:/floodgate.pem
+      - gate-geyser-data:/data
+    networks:
+      - minecraft
+
+volumes:
+  gate-geyser-data:
+
+networks:
+  minecraft:
+    driver: bridge
+```
+
+In `config.yml`:
+
+```yaml
+config:
+  bind: 0.0.0.0:25565
+  bedrock:
+    enabled: true
+    managed: true
+    geyserListenAddr: 0.0.0.0:25567
+    managed:
+      enabled: true
+      configOverrides:
+        bedrock:
+          port: 19132
+          motd1: "Gate + Geyser"
+          motd2: "Java & Bedrock Together!"
+```
+
+## Troubleshooting
+
+### Container Won't Start
+
+Check logs:
+```bash
+docker logs gate
+```
+
+Check if config file exists:
+```bash
+docker run --rm -v $(pwd)/config.yml:/config.yml alpine ls -la /config.yml
+```
+
+### Permission Issues
+
+Fix file permissions:
+```bash
+sudo chown -R 1000:1000 ./config.yml
+```
+
+### Network Connectivity Issues
+
+Test network connectivity:
+```bash
+docker exec gate ping backend-server
+```
+
+Check DNS resolution:
+```bash
+docker exec gate nslookup backend-server
+```
+
+### Port Already in Use
+
+Find what's using the port:
+```bash
+sudo lsof -i :25565
+# or
+sudo netstat -tulpn | grep 25565
+```
+
+### Cannot Connect to Backend Servers
+
+Verify backend servers are running:
+```bash
+docker compose ps
+```
+
+Check network connectivity:
+```bash
+docker compose exec gate ping lobby
+```
+
+Verify config:
+```bash
+docker compose exec gate cat /config.yml
+```
+
+### High Memory Usage
+
+Monitor resource usage:
+```bash
+docker stats gate
+```
+
+Set memory limits:
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+```
+
+### Container Keeps Restarting
+
+Check restart policy:
+```bash
+docker inspect gate | grep -A 5 RestartPolicy
+```
+
+View last logs before crash:
+```bash
+docker logs --tail 100 gate
+```
+
+Disable restart to debug:
+```bash
+docker update --restart=no gate
+```
+
+### Debug Mode
+
+Enable debug logging in `config.yml`:
+
+```yaml
+config:
+  debug: true
+```
+
+Then restart:
+```bash
+docker restart gate
+docker logs -f gate
+```
+
+### Inspecting Configuration
+
+View loaded configuration:
+```bash
+# For JRE variant
+docker exec gate cat /config.yml
+
+# For distroless variant (no shell)
+docker cp gate:/config.yml -
+```
+
+### Testing Connectivity
+
+From host:
+```bash
+telnet localhost 25565
+```
+
+From another container:
+```bash
+docker run --rm --network minecraft-net alpine telnet gate 25565
+```
+
+## Performance Tuning
+
+### For JRE Variant
+
+Optimize Java flags:
+
+```yaml
+services:
+  gate:
+    image: ghcr.io/minekube/gate:latest-jre
+    environment:
+      JAVA_OPTS: |
+        -Xms512M
+        -Xmx1G
+        -XX:+UseG1GC
+        -XX:G1HeapRegionSize=4M
+        -XX:+UnlockExperimentalVMOptions
+        -XX:+ParallelRefProcEnabled
+        -XX:+AlwaysPreTouch
+        -XX:MaxInlineLevel=15
+    volumes:
+      - ./config.yml:/config.yml
+```
+
+### Network Performance
+
+Adjust compression settings in `config.yml`:
+
+```yaml
+config:
+  compression:
+    threshold: 256
+    level: 6  # -1 to 9, higher = more CPU, less bandwidth
+```
+
+### Connection Tuning
+
+```yaml
+config:
+  connectionTimeout: 5s
+  readTimeout: 30s
+  quota:
+    connections:
+      enabled: true
+      ops: 10
+      burst: 20
+      maxEntries: 10000
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Production Guide" icon="shield" href="/deployment/production">
+    Best practices for production deployments
+  </Card>
+  <Card title="Monitoring" icon="chart-line" href="/deployment/monitoring">
+    Monitor your Gate proxy in production
+  </Card>
+</CardGroup>
