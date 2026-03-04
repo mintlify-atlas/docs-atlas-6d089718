@@ -1,0 +1,199 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "Gate",
+  "projectDescription": "High-performance Minecraft reverse proxy with robust multi-protocol version support and cross-platform compatibility.",
+  "theme": "aspen",
+  "primaryColor": "#2e8b57",
+  "lightColor": "#3cb371",
+  "darkColor": "#1e6f3f",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "why-gate"
+            ]
+          },
+          {
+            "group": "Installation",
+            "pages": [
+              "installation/binary",
+              "installation/docker",
+              "installation/kubernetes",
+              "installation/go"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/how-it-works",
+              "concepts/editions"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/overview",
+              "configuration/servers",
+              "configuration/forced-hosts",
+              "configuration/status-ping",
+              "configuration/compression",
+              "configuration/forwarding"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/bedrock-crossplay",
+              "features/lite-mode",
+              "features/modded-servers",
+              "features/builtin-commands",
+              "features/rate-limiting"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/online-mode",
+              "security/forwarding-modes",
+              "security/key-authentication",
+              "security/proxy-protocol"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Developers",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "developers/introduction",
+              "developers/plugin-template",
+              "developers/project-setup"
+            ]
+          },
+          {
+            "group": "Core APIs",
+            "pages": [
+              "developers/api/proxy",
+              "developers/api/player",
+              "developers/api/server",
+              "developers/api/connection"
+            ]
+          },
+          {
+            "group": "Events System",
+            "pages": [
+              "developers/events/overview",
+              "developers/events/lifecycle",
+              "developers/events/player-events",
+              "developers/events/server-events"
+            ]
+          },
+          {
+            "group": "Commands",
+            "pages": [
+              "developers/commands/overview",
+              "developers/commands/registration",
+              "developers/commands/brigadier",
+              "developers/commands/permissions"
+            ]
+          },
+          {
+            "group": "Protocol",
+            "pages": [
+              "developers/protocol/packets",
+              "developers/protocol/plugin-channels",
+              "developers/protocol/sound-system"
+            ]
+          },
+          {
+            "group": "Examples",
+            "pages": [
+              "developers/examples/simple-plugin",
+              "developers/examples/command-plugin",
+              "developers/examples/event-listener"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Deployment",
+        "groups": [
+          {
+            "group": "Operations",
+            "pages": [
+              "deployment/overview",
+              "deployment/production-checklist",
+              "deployment/monitoring"
+            ]
+          },
+          {
+            "group": "Docker",
+            "pages": [
+              "deployment/docker/getting-started",
+              "deployment/docker/compose",
+              "deployment/docker/configuration"
+            ]
+          },
+          {
+            "group": "Kubernetes",
+            "pages": [
+              "deployment/kubernetes/setup",
+              "deployment/kubernetes/manifests",
+              "deployment/kubernetes/scaling"
+            ]
+          },
+          {
+            "group": "Observability",
+            "pages": [
+              "deployment/observability/opentelemetry",
+              "deployment/observability/metrics",
+              "deployment/observability/tracing",
+              "deployment/observability/logging"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "deployment/advanced/connect",
+              "deployment/advanced/load-balancing",
+              "deployment/advanced/failover"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "High-performance Minecraft reverse proxy written in Go",
+    "Built-in Bedrock cross-play support via integrated Geyser",
+    "Multi-protocol version support (Minecraft 1.7 to latest)",
+    "Lite mode for hostname-based routing",
+    "Minimal resource footprint (10MB RAM)",
+    "Cloud-native with Docker and Kubernetes support",
+    "Modern plugin API with event system and command framework",
+    "Multiple player forwarding modes (Velocity, BungeeGuard, Legacy)",
+    "OpenTelemetry observability integration",
+    "Production-ready with proven scalability"
+  ],
+  "publicApiSurface": [
+    "gate.New(options) - Create new Gate instance",
+    "gate.Start(ctx, opts...) - Start Gate proxy server",
+    "proxy.Proxy - Main proxy interface",
+    "proxy.Player - Player connection interface",
+    "proxy.RegisteredServer - Backend server interface",
+    "command.Manager - Command registration and execution",
+    "event.Manager - Event subscription system",
+    "config.Config - Configuration structure",
+    "edition/java/proxy.Proxy - Java Edition proxy",
+    "edition/bedrock/proxy.Proxy - Bedrock Edition proxy"
+  ]
+}
